@@ -38,12 +38,63 @@ function construirePopup(bus, info) {
     <div>${texteArret}</div>${texteRetard}</div>`;
 }
 
-export default function CarteBus({ vehicules, lignesInfo, lignesActives, direction, mapApiRef }) {
+// Construit le contenu du "tableau des prochains passages" pour un arrêt donné,
+// à partir des données de bus les plus récentes (calculé à l'ouverture du popup,
+// pas au moment où le marqueur a été créé, pour rester à jour).
+function construireContenuArret(nomArret, stopId, vehicules, lignesInfo) {
+  const passages = [];
+  (vehicules || []).forEach((v) => {
+    (v.prochains_arrets || []).forEach((a) => {
+      if (a.stop_id !== stopId || !a.arrivee) return;
+      const etaMinutes = (a.arrivee * 1000 - Date.now()) / 60000;
+      if (etaMinutes < -1) return;
+      passages.push({ v, a, eta: Math.max(0, Math.round(etaMinutes)) });
+    });
+  });
+  passages.sort((x, y) => x.eta - y.eta);
+
+  if (passages.length === 0) {
+    return `<div class="popup-bus"><b>${nomArret}</b><div style="margin-top:6px;color:#5B6B72;">Aucun bus prévu pour le moment</div></div>`;
+  }
+
+  const lignesHtml = passages
+    .slice(0, 5)
+    .map(({ v, a, eta }) => {
+      const info = lignesInfo[v.ligne] || { nom: v.ligne, couleur: "#0F2E3D" };
+      const dest = v.destination ? ` → ${v.destination}` : "";
+      const retard =
+        a.retard !== null && a.retard !== undefined ? ` · ${formaterRetard(a.retard)}` : "";
+      return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+        <span style="background:${info.couleur};color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;">${info.nom}</span>
+        <span style="flex:1;font-size:12.5px;">${dest}${retard}</span>
+        <span style="font-weight:700;font-size:13px;">${eta} min</span>
+      </div>`;
+    })
+    .join("");
+
+  return `<div class="popup-bus"><b>${nomArret}</b>${lignesHtml}</div>`;
+}
+
+export default function CarteBus({
+  vehicules,
+  lignesInfo,
+  lignesActives,
+  direction,
+  traces,
+  arretsParLigne,
+  mapApiRef,
+}) {
   const conteneurRef = useRef(null);
   const carteRef = useRef(null);
   const couchesBusRef = useRef(null);
+  const couchesReseauRef = useRef(null);
   const marqueurMoiRef = useRef(null);
   const premierChargementRef = useRef(true);
+  const vehiculesRef = useRef(vehicules);
+  const lignesInfoRef = useRef(lignesInfo);
+
+  useEffect(() => { vehiculesRef.current = vehicules; }, [vehicules]);
+  useEffect(() => { lignesInfoRef.current = lignesInfo; }, [lignesInfo]);
 
   // Initialisation de la carte (une seule fois)
   useEffect(() => {
@@ -51,6 +102,8 @@ export default function CarteBus({ vehicules, lignesInfo, lignesActives, directi
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "&copy; OpenStreetMap contributors",
     }).addTo(carte);
+    // Le réseau (tracés + arrêts) est ajouté avant les bus, pour rester en dessous visuellement.
+    couchesReseauRef.current = L.layerGroup().addTo(carte);
     couchesBusRef.current = L.layerGroup().addTo(carte);
     carteRef.current = carte;
 
@@ -110,6 +163,51 @@ export default function CarteBus({ vehicules, lignesInfo, lignesActives, directi
       premierChargementRef.current = false;
     }
   }, [vehicules, lignesInfo, lignesActives, direction]);
+
+  // Redessine les tracés de lignes + arrêts cliquables — seulement quand la
+  // sélection de lignes change, PAS à chaque poll de 15s (ça fermerait les
+  // popups ouverts et c'est une donnée qui ne bouge de toute façon jamais).
+  useEffect(() => {
+    const couche = couchesReseauRef.current;
+    if (!couche || !traces || !arretsParLigne) return;
+    couche.clearLayers();
+
+    const arretsDejaAffiches = new Set();
+
+    Object.keys(lignesInfo).forEach((routeId) => {
+      if (!lignesActives.has(routeId)) return;
+      const info = lignesInfo[routeId];
+
+      // Tracé de la ligne
+      (traces[routeId] || []).forEach((points) => {
+        if (points.length < 2) return;
+        L.polyline(points, { color: info.couleur, weight: 4, opacity: 0.55 }).addTo(couche);
+      });
+
+      // Arrêts de la ligne (petits points cliquables)
+      (arretsParLigne[routeId] || []).forEach((arret) => {
+        if (arretsDejaAffiches.has(arret.stop_id)) return; // évite les doublons si desservi par plusieurs lignes actives
+        arretsDejaAffiches.add(arret.stop_id);
+
+        const point = L.circleMarker([arret.lat, arret.lon], {
+          radius: 5,
+          weight: 2,
+          color: "#fff",
+          fillColor: "#123A4C",
+          fillOpacity: 1,
+        }).addTo(couche);
+
+        point.bindPopup("");
+        point.on("popupopen", () => {
+          point
+            .getPopup()
+            .setContent(
+              construireContenuArret(arret.nom, arret.stop_id, vehiculesRef.current, lignesInfoRef.current)
+            );
+        });
+      });
+    });
+  }, [traces, arretsParLigne, lignesInfo, lignesActives]);
 
   return <div ref={conteneurRef} className="fixed inset-0" />;
 }

@@ -19,6 +19,7 @@ export default function App() {
   const alerteInitiale = lireStockage(CLE_ALERTE);
 
   const [donnees, setDonnees] = useState({ vehicules: [], lignes: {}, generated_at: null });
+  const [reseau, setReseau] = useState({ traces: {}, arrets: {} });
   const [lignesInfo, setLignesInfo] = useState({});
   const [lignesActives, setLignesActives] = useState(
     new Set(preferencesInitiales?.lignesActives || [])
@@ -99,6 +100,20 @@ export default function App() {
     const id = setInterval(recuperer, 15000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Données réseau (tracés + arrêts) : quasi-statiques, récupérées une seule fois
+  // au démarrage plutôt qu'à chaque poll de 15s.
+  useEffect(() => {
+    fetch("/.netlify/functions/reseau-statique")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.erreur) return;
+        setReseau({ traces: data.traces || {}, arrets: data.arrets || {} });
+      })
+      .catch(() => {
+        /* pas grave : la carte fonctionne sans le tracé/les arrêts */
+      });
   }, []);
 
   useEffect(() => {
@@ -299,6 +314,8 @@ export default function App() {
         lignesInfo={lignesInfo}
         lignesActives={lignesActives}
         direction={direction}
+        traces={reseau.traces}
+        arretsParLigne={reseau.arrets}
         mapApiRef={mapApiRef}
       />
 

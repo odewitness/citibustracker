@@ -1,104 +1,12 @@
 const protobuf = require("gtfs-realtime-bindings");
-const AdmZip = require("adm-zip");
+const { charger } = require("./_lib/gtfs-statique.js");
 
 // Flux temps réel (positions des bus + horaires)
 const FEED_URL = "https://feed-citibus-narbonne.ratpdev.com/GTFS-RT/gtfs-rt.bin";
 
-// Données théoriques (GTFS statique) de Citibus : utilisées pour retrouver le
-// nom des arrêts et des lignes à partir de leurs identifiants.
-const GTFS_STATIQUE_URL =
-  "https://s3.eu-west-1.amazonaws.com/files.orchestra.ratpdev.com/networks/narbonne/exports/scolaires-sans-tad.zip";
-
-// Cache en mémoire : tant que la fonction reste "chaude" (conteneur réutilisé
-// par Netlify entre deux appels rapprochés), on évite de retélécharger le
-// zip GTFS statique à chaque requête. Si la fonction redémarre à froid, le
-// cache est perdu et se reconstruit automatiquement au prochain appel.
-let cacheStatique = null;
-
-function splitCsvLine(line) {
-  // Gestion simple des champs CSV, avec support des guillemets
-  const result = [];
-  let cur = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i];
-    if (c === '"') {
-      inQuotes = !inQuotes;
-    } else if (c === "," && !inQuotes) {
-      result.push(cur);
-      cur = "";
-    } else {
-      cur += c;
-    }
-  }
-  result.push(cur);
-  return result;
-}
-
-function parseCsv(text) {
-  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.length > 0);
-  if (lines.length === 0) return [];
-  const headers = splitCsvLine(lines[0]).map((h) => h.trim());
-  return lines.slice(1).map((line) => {
-    const cols = splitCsvLine(line);
-    const obj = {};
-    headers.forEach((h, i) => (obj[h] = (cols[i] || "").trim()));
-    return obj;
-  });
-}
-
-async function chargerDonneesStatiques() {
-  if (cacheStatique) return cacheStatique;
-
-  const resp = await fetch(GTFS_STATIQUE_URL);
-  if (!resp.ok) {
-    throw new Error("Téléchargement GTFS statique échoué : " + resp.status);
-  }
-  const buffer = Buffer.from(await resp.arrayBuffer());
-  const zip = new AdmZip(buffer);
-
-  const arrets = {};
-  const lignes = {};
-
-  const stopsEntry = zip.getEntry("stops.txt");
-  if (stopsEntry) {
-    parseCsv(stopsEntry.getData().toString("utf8")).forEach((row) => {
-      arrets[row.stop_id] = row.stop_name || row.stop_id;
-    });
-  }
-
-  const routesEntry = zip.getEntry("routes.txt");
-  if (routesEntry) {
-    parseCsv(routesEntry.getData().toString("utf8")).forEach((row) => {
-      const nom = row.route_short_name || row.route_long_name || row.route_id;
-      const couleur = row.route_color || "";
-      lignes[row.route_id] = {
-        nom: nom,
-        couleur: couleur ? "#" + couleur : "#0078d4",
-      };
-    });
-  }
-
-  // trips.txt associe chaque trip_id à une destination réelle (trip_headsign),
-  // ex: "Gare SNCF" ou "Zone Plaisance" — c'est ce qu'affiche le bus lui-même.
-  // On l'utilise pour remplacer "Sens 0 / Sens 1" par une vraie destination.
-  const destinationsParTrip = {};
-  const tripsEntry = zip.getEntry("trips.txt");
-  if (tripsEntry) {
-    parseCsv(tripsEntry.getData().toString("utf8")).forEach((row) => {
-      if (row.trip_id && row.trip_headsign) {
-        destinationsParTrip[row.trip_id] = row.trip_headsign;
-      }
-    });
-  }
-
-  cacheStatique = { arrets, lignes, destinationsParTrip };
-  return cacheStatique;
-}
-
 exports.handler = async function () {
   try {
-    const { arrets, lignes, destinationsParTrip } = await chargerDonneesStatiques();
+    const { arrets, lignes, destinationsParTrip } = await charger();
 
     const resp = await fetch(FEED_URL);
     if (!resp.ok) {
