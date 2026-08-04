@@ -275,13 +275,27 @@ export default function App() {
       {bandeauTexte && (
         <div
           className={
-            "fixed left-1/2 -translate-x-1/2 top-[118px] z-[1080] px-4 py-2.5 rounded-xl text-[13px] shadow-lg max-w-[88vw] text-center " +
+            "fixed left-0 right-0 bottom-0 z-[1080] px-4 pt-3 pb-3 rounded-t-2xl shadow-[0_-4px_20px_rgba(0,0,0,0.25)] flex items-center gap-3 " +
             (bandeauImminent
-              ? "bg-[var(--amber-500)] text-[var(--chrome-950)] font-bold"
+              ? "bg-[var(--amber-500)] text-[var(--chrome-950)]"
               : "bg-[var(--chrome-950)] text-white")
           }
+          style={{ paddingBottom: "max(14px, env(safe-area-inset-bottom))" }}
         >
-          {bandeauTexte}
+          <span className="text-xl leading-none shrink-0">🚌</span>
+          <span className={"flex-1 text-[13.5px] " + (bandeauImminent ? "font-bold" : "")}>
+            {bandeauTexte}
+          </span>
+          <button
+            onClick={desarmerAlerte}
+            aria-label="Arrêter le suivi"
+            className={
+              "shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-sm leading-none " +
+              (bandeauImminent ? "bg-black/10" : "bg-white/15")
+            }
+          >
+            ✕
+          </button>
         </div>
       )}
 
@@ -295,10 +309,14 @@ export default function App() {
         onClick={ouvrirPanneauAlerte}
         aria-label="Alerte à l'approche"
         className={
-          "fixed left-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 " +
+          "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 transition-[bottom] " +
           (alerteArmee ? "bg-[var(--amber-500)]" : "bg-white text-[var(--chrome-950)]")
         }
-        style={{ bottom: "max(18px, env(safe-area-inset-bottom))" }}
+        style={{
+          bottom: bandeauTexte
+            ? "calc(150px + env(safe-area-inset-bottom))"
+            : "calc(78px + env(safe-area-inset-bottom))",
+        }}
       >
         🔔
       </button>
@@ -324,10 +342,14 @@ export default function App() {
         onClick={recentrerSurMoi}
         aria-label="Centrer sur ma position"
         className={
-          "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 bg-[var(--amber-500)] text-[var(--chrome-950)] " +
+          "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 bg-[var(--amber-500)] text-[var(--chrome-950)] transition-[bottom] " +
           (recentrageEnCours ? "opacity-60" : "")
         }
-        style={{ bottom: "max(18px, env(safe-area-inset-bottom))" }}
+        style={{
+          bottom: bandeauTexte
+            ? "calc(90px + env(safe-area-inset-bottom))"
+            : "max(18px, env(safe-area-inset-bottom))",
+        }}
       >
         ◉
       </button>

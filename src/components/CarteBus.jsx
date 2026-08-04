@@ -53,7 +53,6 @@ export default function CarteBus({ vehicules, lignesInfo, lignesActives, directi
   // Initialisation de la carte (une seule fois)
   useEffect(() => {
     const carte = L.map(conteneurRef.current, { zoomControl: false }).setView([43.18, 3.0], 13);
-    L.control.zoom({ position: "bottomleft" }).addTo(carte);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       attribution: "&copy; OpenStreetMap contributors",
     }).addTo(carte);
