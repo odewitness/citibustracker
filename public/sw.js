@@ -1,8 +1,10 @@
-// Service worker minimal : ne fait aucune mise en cache, sert uniquement à
-// satisfaire le critère d'installabilité d'Android/Chrome (qui exige un SW
-// actif avec un gestionnaire "fetch" pour proposer le mode plein écran).
+// Service worker minimal : ne fait AUCUNE mise en cache et n'intercepte AUCUNE
+// requête. Il sert uniquement à satisfaire le critère d'installabilité
+// d'Android/Chrome (présence d'un service worker actif), sans risque.
+//
+// Important : on n'ajoute PAS de gestionnaire "fetch" qui rejouerait
+// event.request via fetch() — repasser une requête de type "navigate" (le
+// chargement de la page elle-même) dans fetch() est interdit par le
+// navigateur et provoque un échec réseau silencieux → écran blanc.
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
-self.addEventListener("fetch", (event) => {
-  event.respondWith(fetch(event.request));
-});
