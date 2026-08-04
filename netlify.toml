@@ -5,3 +5,35 @@
 
 [functions]
   node_bundler = "esbuild"
+
+# index.html, le manifest et le service worker doivent TOUJOURS être revérifiés
+# auprès du serveur : sinon un téléphone peut rester bloqué indéfiniment sur
+# une ancienne version qui pointe vers des fichiers JS qui n'existent plus
+# après un nouveau déploiement (= écran blanc).
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+[[headers]]
+  for = "/manifest.webmanifest"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
+
+# À l'inverse, les fichiers dans /assets/ ont un nom unique (hash) par build :
+# ils peuvent être mis en cache très longtemps sans risque, un nouveau build
+# génère toujours de nouveaux noms de fichiers.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
