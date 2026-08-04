@@ -1,22 +1,34 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import { formaterRetard } from "../utils.js";
 
-// Icône de bus : pastille colorée avec le nom de la ligne, + flèche de cap si connue
-function creerIconeBus(couleur, texte, cap) {
+// Icône de bus : pastille colorée, numéro de ligne, flèche de cap si connue.
+// - direction : "0"/"1" → bordure pleine ou pointillée, pour distinguer les sens
+//   d'un coup d'œil sans avoir à sélectionner un bus.
+// - etat : "normal" | "selectionne" | "attenue" → mis en évidence / estompé
+//   quand l'utilisateur a tapé sur un bus précis pour le suivre parmi d'autres
+//   de la même ligne.
+function creerIconeBus(couleur, texte, cap, direction, etat) {
+  const taille = etat === "selectionne" ? 38 : 30;
+  const bordure = String(direction) === "1" ? "3px dashed #fff" : "2px solid #fff";
+  const anneau =
+    etat === "selectionne"
+      ? "box-shadow:0 0 0 3px var(--amber-500), 0 2px 10px rgba(0,0,0,.45);"
+      : "box-shadow:0 2px 6px rgba(0,0,0,.35);";
+  const opacite = etat === "attenue" ? 0.25 : 1;
   const fleche =
     cap !== null && cap !== undefined
       ? `<div class="bus-cap" style="transform:translateX(-50%) rotate(${cap}deg);"></div>`
       : "";
   return L.divIcon({
-    html: `<div style="position:relative;">${fleche}
-      <div style="width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
-      color:#fff;font-size:11px;font-weight:700;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);
+    html: `<div style="position:relative;opacity:${opacite};">${fleche}
+      <div style="width:${taille}px;height:${taille}px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      color:#fff;font-size:${etat === "selectionne" ? 13 : 11}px;font-weight:700;border:${bordure};${anneau}
       background:${couleur};">${texte}</div></div>`,
     className: "",
-    iconSize: [30, 30],
-    iconAnchor: [15, 15],
-    popupAnchor: [0, -15],
+    iconSize: [taille, taille],
+    iconAnchor: [taille / 2, taille / 2],
+    popupAnchor: [0, -taille / 2],
   });
 }
 
@@ -93,8 +105,21 @@ export default function CarteBus({
   const vehiculesRef = useRef(vehicules);
   const lignesInfoRef = useRef(lignesInfo);
 
+  // Bus actuellement isolé par l'utilisateur (tap-to-focus), pour le distinguer
+  // des autres bus de la même ligne. null = aucune sélection, affichage normal.
+  const [busSelectionneId, setBusSelectionneId] = useState(null);
+
   useEffect(() => { vehiculesRef.current = vehicules; }, [vehicules]);
   useEffect(() => { lignesInfoRef.current = lignesInfo; }, [lignesInfo]);
+
+  // Ligne du bus sélectionné (pour atténuer les tracés des autres lignes aussi).
+  // Calculé à chaque rendu (peu coûteux) mais utilisé comme dépendance d'effet
+  // sous forme de simple chaîne, pour ne PAS redessiner le réseau à chaque
+  // poll de 15s — seulement quand la sélection change réellement.
+  const busSelectionne = busSelectionneId
+    ? vehicules.find((v) => v.id === busSelectionneId) || null
+    : null;
+  const ligneSelectionnee = busSelectionne ? String(busSelectionne.ligne) : null;
 
   // Initialisation de la carte (une seule fois)
   useEffect(() => {
@@ -106,6 +131,10 @@ export default function CarteBus({
     couchesReseauRef.current = L.layerGroup().addTo(carte);
     couchesBusRef.current = L.layerGroup().addTo(carte);
     carteRef.current = carte;
+
+    // Un tap sur la carte (pas sur un marqueur, Leaflet ne propage pas ces
+    // clics-là) désélectionne le bus actuellement isolé.
+    carte.on("click", () => setBusSelectionneId(null));
 
     // On expose quelques méthodes utiles au composant parent (recentrage, suivi)
     if (mapApiRef) {
@@ -150,10 +179,18 @@ export default function CarteBus({
       const info = lignesInfo[bus.ligne];
       if (!info) return;
 
-      const icone = creerIconeBus(info.couleur, info.nom, bus.cap);
+      let etat = "normal";
+      if (busSelectionneId) {
+        etat = bus.id === busSelectionneId ? "selectionne" : "attenue";
+      }
+
+      const icone = creerIconeBus(info.couleur, info.nom, bus.cap, bus.direction, etat);
       const marker = L.marker([bus.lat, bus.lon], { icon: icone }).bindPopup(
         construirePopup(bus, info)
       );
+      marker.on("click", () => {
+        setBusSelectionneId((precedent) => (precedent === bus.id ? null : bus.id));
+      });
       couche.addLayer(marker);
       bounds.push([bus.lat, bus.lon]);
     });
@@ -162,11 +199,12 @@ export default function CarteBus({
       carteRef.current.fitBounds(bounds, { maxZoom: 15, padding: [40, 100] });
       premierChargementRef.current = false;
     }
-  }, [vehicules, lignesInfo, lignesActives, direction]);
+  }, [vehicules, lignesInfo, lignesActives, direction, busSelectionneId]);
 
-  // Redessine les tracés de lignes + arrêts cliquables — seulement quand la
-  // sélection de lignes change, PAS à chaque poll de 15s (ça fermerait les
-  // popups ouverts et c'est une donnée qui ne bouge de toute façon jamais).
+  // Redessine les tracés de lignes + arrêts cliquables — quand la sélection de
+  // lignes change, ou quand la ligne du bus mis en avant change (mais PAS à
+  // chaque poll de 15s : ligneSelectionnee est une simple chaîne stable tant
+  // que le même bus reste sélectionné, donc pas de redessin inutile).
   useEffect(() => {
     const couche = couchesReseauRef.current;
     if (!couche || !traces || !arretsParLigne) return;
@@ -177,11 +215,21 @@ export default function CarteBus({
     Object.keys(lignesInfo).forEach((routeId) => {
       if (!lignesActives.has(routeId)) return;
       const info = lignesInfo[routeId];
+      const estLigneAttenuee = ligneSelectionnee !== null && ligneSelectionnee !== routeId;
 
-      // Tracé de la ligne
-      (traces[routeId] || []).forEach((points) => {
-        if (points.length < 2) return;
-        L.polyline(points, { color: info.couleur, weight: 4, opacity: 0.55 }).addTo(couche);
+      // Tracé de la ligne, par direction (plein = sens 0, pointillé = sens 1)
+      const tracesLigne = traces[routeId] || {};
+      Object.keys(tracesLigne).forEach((dirKey) => {
+        const estPointille = dirKey === "1";
+        (tracesLigne[dirKey] || []).forEach((points) => {
+          if (points.length < 2) return;
+          L.polyline(points, {
+            color: info.couleur,
+            weight: 4,
+            opacity: estLigneAttenuee ? 0.12 : 0.55,
+            dashArray: estPointille ? "8 6" : null,
+          }).addTo(couche);
+        });
       });
 
       // Arrêts de la ligne (petits points cliquables)
@@ -194,7 +242,7 @@ export default function CarteBus({
           weight: 2,
           color: "#fff",
           fillColor: "#123A4C",
-          fillOpacity: 1,
+          fillOpacity: estLigneAttenuee ? 0.15 : 1,
         }).addTo(couche);
 
         point.bindPopup("");
@@ -207,7 +255,28 @@ export default function CarteBus({
         });
       });
     });
-  }, [traces, arretsParLigne, lignesInfo, lignesActives]);
+  }, [traces, arretsParLigne, lignesInfo, lignesActives, ligneSelectionnee]);
 
-  return <div ref={conteneurRef} className="fixed inset-0" />;
+  return (
+    <>
+      <div ref={conteneurRef} className="fixed inset-0" />
+      {busSelectionne && (
+        <div className="fixed top-[190px] left-1/2 -translate-x-1/2 z-[1070] bg-white rounded-full shadow-lg px-4 py-2 flex items-center gap-2 text-[13px]">
+          <span
+            className="w-2.5 h-2.5 rounded-full shrink-0"
+            style={{ background: lignesInfo[busSelectionne.ligne]?.couleur || "#0F2E3D" }}
+          />
+          <span className="font-medium">
+            Bus {busSelectionne.label} isolé{busSelectionne.destination ? " → " + busSelectionne.destination : ""}
+          </span>
+          <button
+            onClick={() => setBusSelectionneId(null)}
+            className="ml-1 w-5 h-5 rounded-full bg-[var(--line)] flex items-center justify-center text-[11px] leading-none"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+    </>
+  );
 }

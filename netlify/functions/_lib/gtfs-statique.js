@@ -81,7 +81,7 @@ async function charger() {
   // trips.txt associe chaque trip_id à une ligne (route_id), un tracé (shape_id)
   // et une destination réelle (trip_headsign).
   const destinationsParTrip = {};
-  const shapeIdParRoute = {}; // route_id -> Set(shape_id)
+  const shapeIdParRouteDirection = {}; // "route_id|direction_id" -> Set(shape_id)
   const tripIdVersRoute = {}; // trip_id -> route_id (pour joindre stop_times.txt ensuite)
   const tripsEntry = zip.getEntry("trips.txt");
   if (tripsEntry) {
@@ -93,8 +93,10 @@ async function charger() {
         tripIdVersRoute[row.trip_id] = row.route_id;
       }
       if (row.route_id && row.shape_id) {
-        if (!shapeIdParRoute[row.route_id]) shapeIdParRoute[row.route_id] = new Set();
-        shapeIdParRoute[row.route_id].add(row.shape_id);
+        const dir = row.direction_id || "0";
+        const cle = row.route_id + "|" + dir;
+        if (!shapeIdParRouteDirection[cle]) shapeIdParRouteDirection[cle] = new Set();
+        shapeIdParRouteDirection[cle].add(row.shape_id);
       }
     });
   }
@@ -120,10 +122,14 @@ async function charger() {
       .map((p) => [p.lat, p.lon]);
   });
 
-  // Tracés (liste de polylignes) par ligne
-  const tracesParLigne = {}; // route_id -> [[[lat,lon], ...], ...]
-  Object.keys(shapeIdParRoute).forEach((routeId) => {
-    tracesParLigne[routeId] = Array.from(shapeIdParRoute[routeId])
+  // Tracés par ligne ET par direction (permet un affichage plein/pointillé selon le sens)
+  const tracesParLigne = {}; // route_id -> { direction_id: [[[lat,lon], ...], ...] }
+  Object.keys(shapeIdParRouteDirection).forEach((cle) => {
+    const separateurIdx = cle.lastIndexOf("|");
+    const routeId = cle.slice(0, separateurIdx);
+    const dir = cle.slice(separateurIdx + 1);
+    if (!tracesParLigne[routeId]) tracesParLigne[routeId] = {};
+    tracesParLigne[routeId][dir] = Array.from(shapeIdParRouteDirection[cle])
       .map((sid) => shapes[sid])
       .filter(Boolean);
   });
