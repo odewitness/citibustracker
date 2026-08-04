@@ -153,10 +153,25 @@ exports.handler = async function () {
         const aVenir = tu.stopTimeUpdate.slice(idxDepart);
         prochainsArrets = aVenir.map((s) => {
           const epoch = (s.arrival && s.arrival.time) || (s.departure && s.departure.time) || null;
+          const delaiSecondes =
+            (s.arrival && typeof s.arrival.delay === "number" && s.arrival.delay) ||
+            (s.departure && typeof s.departure.delay === "number" && s.departure.delay) ||
+            0;
+          // L'heure théorique (horaire de la fiche horaire) = heure prédite moins le retard actuel.
+          const epochTheorique = epoch ? Number(epoch) - delaiSecondes : null;
+          const horairePrevu = epochTheorique
+            ? new Date(epochTheorique * 1000).toLocaleTimeString("fr-FR", {
+                hour: "2-digit",
+                minute: "2-digit",
+                timeZone: "Europe/Paris",
+              })
+            : null;
           return {
             stop_id: s.stopId,
             nom: arrets[s.stopId] || s.stopId,
             arrivee: epoch ? Number(epoch) : null,
+            retard: epoch ? delaiSecondes : null,
+            horaire_prevu: horairePrevu,
           };
         });
 
