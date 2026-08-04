@@ -104,13 +104,20 @@ export default function CarteBus({
   const premierChargementRef = useRef(true);
   const vehiculesRef = useRef(vehicules);
   const lignesInfoRef = useRef(lignesInfo);
+  // Marqueurs de bus actuellement sur la carte, indexés par id de véhicule.
+  // Permet de mettre à jour leur icône (surbrillance/atténuation) à la sélection
+  // SANS passer par couche.clearLayers(), qui détruirait le marqueur cliqué et
+  // fermerait son popup avant même que l'utilisateur ait pu le voir.
+  const marqueursRef = useRef(new Map());
 
   // Bus actuellement isolé par l'utilisateur (tap-to-focus), pour le distinguer
   // des autres bus de la même ligne. null = aucune sélection, affichage normal.
   const [busSelectionneId, setBusSelectionneId] = useState(null);
+  const busSelectionneIdRef = useRef(null);
 
   useEffect(() => { vehiculesRef.current = vehicules; }, [vehicules]);
   useEffect(() => { lignesInfoRef.current = lignesInfo; }, [lignesInfo]);
+  useEffect(() => { busSelectionneIdRef.current = busSelectionneId; }, [busSelectionneId]);
 
   // Ligne du bus sélectionné (pour atténuer les tracés des autres lignes aussi).
   // Calculé à chaque rendu (peu coûteux) mais utilisé comme dépendance d'effet
@@ -166,12 +173,17 @@ export default function CarteBus({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Redessine les marqueurs de bus à chaque nouvelle donnée / changement de filtre
+  // Redessine les marqueurs de bus à chaque nouvelle donnée / changement de filtre.
+  // Ne dépend PAS de busSelectionneId : la sélection est gérée par l'effet suivant,
+  // qui met juste à jour l'icône des marqueurs existants sans les recréer, pour
+  // ne pas fermer le popup qu'on vient d'ouvrir en cliquant sur un bus.
   useEffect(() => {
     const couche = couchesBusRef.current;
     if (!couche) return;
     couche.clearLayers();
+    marqueursRef.current.clear();
 
+    const selectionActuelle = busSelectionneIdRef.current;
     const bounds = [];
     vehicules.forEach((bus) => {
       if (!lignesActives.has(String(bus.ligne))) return;
@@ -180,8 +192,8 @@ export default function CarteBus({
       if (!info) return;
 
       let etat = "normal";
-      if (busSelectionneId) {
-        etat = bus.id === busSelectionneId ? "selectionne" : "attenue";
+      if (selectionActuelle) {
+        etat = bus.id === selectionActuelle ? "selectionne" : "attenue";
       }
 
       const icone = creerIconeBus(info.couleur, info.nom, bus.cap, bus.direction, etat);
@@ -192,6 +204,7 @@ export default function CarteBus({
         setBusSelectionneId((precedent) => (precedent === bus.id ? null : bus.id));
       });
       couche.addLayer(marker);
+      marqueursRef.current.set(bus.id, { marker, bus, info });
       bounds.push([bus.lat, bus.lon]);
     });
 
@@ -199,7 +212,20 @@ export default function CarteBus({
       carteRef.current.fitBounds(bounds, { maxZoom: 15, padding: [40, 100] });
       premierChargementRef.current = false;
     }
-  }, [vehicules, lignesInfo, lignesActives, direction, busSelectionneId]);
+  }, [vehicules, lignesInfo, lignesActives, direction]);
+
+  // Met à jour l'icône des marqueurs déjà présents quand la sélection change
+  // (clic sur un bus / désélection), sans toucher à la couche ni aux popups :
+  // c'est ce qui permet au popup du bus cliqué de rester ouvert.
+  useEffect(() => {
+    marqueursRef.current.forEach(({ marker, bus, info }) => {
+      let etat = "normal";
+      if (busSelectionneId) {
+        etat = bus.id === busSelectionneId ? "selectionne" : "attenue";
+      }
+      marker.setIcon(creerIconeBus(info.couleur, info.nom, bus.cap, bus.direction, etat));
+    });
+  }, [busSelectionneId]);
 
   // Redessine les tracés de lignes + arrêts cliquables — quand la sélection de
   // lignes change, ou quand la ligne du bus mis en avant change (mais PAS à
@@ -257,26 +283,5 @@ export default function CarteBus({
     });
   }, [traces, arretsParLigne, lignesInfo, lignesActives, ligneSelectionnee]);
 
-  return (
-    <>
-      <div ref={conteneurRef} className="fixed inset-0" />
-      {busSelectionne && (
-        <div className="fixed top-[190px] left-1/2 -translate-x-1/2 z-[1070] bg-white rounded-full shadow-lg px-4 py-2 flex items-center gap-2 text-[13px]">
-          <span
-            className="w-2.5 h-2.5 rounded-full shrink-0"
-            style={{ background: lignesInfo[busSelectionne.ligne]?.couleur || "#0F2E3D" }}
-          />
-          <span className="font-medium">
-            Bus {busSelectionne.label} isolé{busSelectionne.destination ? " → " + busSelectionne.destination : ""}
-          </span>
-          <button
-            onClick={() => setBusSelectionneId(null)}
-            className="ml-1 w-5 h-5 rounded-full bg-[var(--line)] flex items-center justify-center text-[11px] leading-none"
-          >
-            ✕
-          </button>
-        </div>
-      )}
-    </>
-  );
+  return <div ref={conteneurRef} className="fixed inset-0" />;
 }
