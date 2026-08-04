@@ -33,6 +33,20 @@ export function ecrireStockage(cle, valeur) {
   }
 }
 
+// Formate un retard (en secondes) de façon lisible : en secondes en dessous
+// d'une minute (évite les "0,3 min" peu parlants), en minutes arrondies au-delà.
+export function formaterRetard(retardSecondes) {
+  if (retardSecondes === null || retardSecondes === undefined) return null;
+  const abs = Math.abs(retardSecondes);
+  if (abs < 10) return "à l'heure";
+  if (abs < 60) {
+    const secs = Math.round(abs);
+    return retardSecondes > 0 ? `retard de ${secs} s` : `avance de ${secs} s`;
+  }
+  const minutes = Math.round(abs / 60);
+  return retardSecondes > 0 ? `retard de ${minutes} min` : `avance de ${minutes} min`;
+}
+
 export function jouerSon() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();

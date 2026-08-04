@@ -2,9 +2,22 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <meta name="theme-color" content="#0B2430" />
   <title>Bus Citibus — Le Grand Narbonne</title>
+
+  <link rel="manifest" href="/manifest.webmanifest" />
+
+  <!-- Android / Chrome : mode plein écran quand ajouté à l'écran d'accueil -->
+  <meta name="mobile-web-app-capable" content="yes" />
+
+  <!-- iOS / Safari : le manifest seul ne suffit pas, ces balises sont indispensables -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Citibus" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+  <link rel="icon" href="/icon-192.png" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

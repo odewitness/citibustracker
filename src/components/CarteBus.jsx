@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import { formaterRetard } from "../utils.js";
 
 // Icône de bus : pastille colorée avec le nom de la ligne, + flèche de cap si connue
 function creerIconeBus(couleur, texte, cap) {
@@ -28,14 +29,8 @@ function construirePopup(bus, info) {
     : "";
   let texteRetard = "";
   if (bus.retard !== null && bus.retard !== undefined) {
-    const cls = bus.retard > 30 ? "retard-neg" : bus.retard < -30 ? "retard-pos" : "";
-    const mots =
-      bus.retard > 0
-        ? `${Math.round(bus.retard / 6) / 10} min de retard`
-        : bus.retard < 0
-        ? `${Math.round(-bus.retard / 6) / 10} min d'avance`
-        : "à l'heure";
-    texteRetard = `<div class="${cls}">${mots}</div>`;
+    const cls = bus.retard > 60 ? "retard-neg" : bus.retard < -60 ? "retard-pos" : "";
+    texteRetard = `<div class="${cls}">${formaterRetard(bus.retard)}</div>`;
   }
   return `<div class="popup-bus"><b>Ligne ${info.nom} — Bus ${bus.label}</b>
     ${texteDestination}

@@ -213,7 +213,12 @@ exports.handler = async function () {
         "Access-Control-Allow-Origin": "*",
       },
       body: JSON.stringify({
-        generated_at: new Date().toLocaleTimeString("fr-FR"),
+        generated_at: new Date().toLocaleTimeString("fr-FR", {
+          timeZone: "Europe/Paris",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        }),
         vehicules: vehicules,
         lignes: lignes,
       }),
