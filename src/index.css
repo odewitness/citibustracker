@@ -53,3 +53,23 @@ body {
    sautent d'un point à l'autre. Classe posée sur le conteneur de la carte et
    retirée pendant les zooms (voir CarteBus.jsx). */
 .bus-fluide .leaflet-marker-icon { transition: transform 1.2s ease-out; }
+
+/* Bandeau de suivi au déclenchement : une respiration lumineuse suffit à
+   attirer l'œil sans faire bouger la mise en page. */
+@keyframes alerte-respire {
+  0%, 100% { box-shadow: 0 -4px 20px rgba(0,0,0,.25); }
+  50% { box-shadow: 0 -4px 28px rgba(242,169,59,.75); }
+}
+.animate-alerte { animation: alerte-respire 1.1s ease-in-out infinite; }
+
+@keyframes sonnerie {
+  0%, 60%, 100% { transform: rotate(0); }
+  10%, 30%, 50% { transform: rotate(-12deg); }
+  20%, 40% { transform: rotate(12deg); }
+}
+.animate-sonnerie { display: inline-block; animation: sonnerie 1.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-alerte, .animate-sonnerie, .animate-pouls { animation: none; }
+  .bus-fluide .leaflet-marker-icon { transition: none; }
+}

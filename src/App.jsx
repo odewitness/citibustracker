@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import CarteBus from "./components/CarteBus.jsx";
 import IleStatut from "./components/IleStatut.jsx";
 import PanneauAlerte from "./components/PanneauAlerte.jsx";
+import BandeauSuivi from "./components/BandeauSuivi.jsx";
 import PanneauArrets from "./components/PanneauArrets.jsx";
 import { abonnerAlerte, annulerAlerteServeur, lireClePush } from "./push.js";
 import {
@@ -13,7 +14,6 @@ import {
   lireStockage,
   ecrireStockage,
   jouerSon,
-  formaterRetard,
 } from "./utils.js";
 
 const CLE_PREFERENCES = "citibus:preferences";
@@ -433,7 +433,13 @@ export default function App() {
     if ("Notification" in window && Notification.permission === "granted") {
       new Notification("🚌 Bus proche !", { body: texte, tag: "citibus-alerte" });
     }
-    setSuivi({ statut: "imminent", texte });
+    setSuivi({
+      statut: "imminent",
+      texte,
+      ligneNom: nomLigne(routeId),
+      arretNom: nomArret,
+      eta: Math.max(0, minutesRestantes),
+    });
     // Un seul minuteur à la fois : sans ce nettoyage, réarmer une alerte dans
     // les 90 s laissait l'ancien minuteur désarmer la nouvelle.
     clearTimeout(minuteurDesarmementRef.current);
@@ -575,61 +581,12 @@ export default function App() {
         onChangerDirection={setDirection}
       />
 
-      {suivi && (
-        <div
-          className={
-            "fixed left-0 right-0 bottom-0 z-[1080] px-4 pt-3 pb-3 rounded-t-2xl shadow-[0_-4px_20px_rgba(0,0,0,0.25)] " +
-            (suivi.statut === "imminent"
-              ? "bg-[var(--amber-500)] text-[var(--chrome-950)]"
-              : "bg-[var(--chrome-950)] text-white")
-          }
-          style={{ paddingBottom: "max(14px, env(safe-area-inset-bottom))" }}
-        >
-          <div className="flex items-center gap-3">
-            <span className="text-xl leading-none shrink-0">🚌</span>
-
-            {suivi.statut === "suivi" ? (
-              <div className="flex-1 min-w-0">
-                <div className="text-[13.5px] font-semibold truncate">
-                  Ligne {suivi.ligneNom} → {suivi.arretNom}
-                </div>
-                <div className="flex items-center gap-2 text-[12px] text-white/80 mt-0.5 flex-wrap">
-                  {suivi.horairePrevu && <span>Prévu à {suivi.horairePrevu}</span>}
-                  {suivi.retard !== null && suivi.retard !== undefined && (
-                    <span
-                      className={
-                        suivi.retard > 60 ? "text-[var(--amber-500)] font-semibold" : ""
-                      }
-                    >
-                      • {formaterRetard(suivi.retard)}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <span className="flex-1 text-[13.5px]">{suivi.texte}</span>
-            )}
-
-            {suivi.statut === "suivi" && (
-              <div className="font-signage text-xl font-bold shrink-0 tabular-nums">
-                {suivi.eta}
-                <span className="text-[11px] font-sans font-normal ml-0.5">min</span>
-              </div>
-            )}
-
-            <button
-              onClick={desarmerAlerte}
-              aria-label="Arrêter le suivi"
-              className={
-                "shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-sm leading-none " +
-                (suivi.statut === "imminent" ? "bg-black/10" : "bg-white/15")
-              }
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
+      <BandeauSuivi
+        suivi={suivi}
+        couleurLigne={lignesInfo[alerte?.routeId]?.couleur}
+        seuil={alerte?.seuilMinutes}
+        onArreter={desarmerAlerte}
+      />
 
       {messageFlash && (
         <div className="fixed left-1/2 -translate-x-1/2 bottom-20 z-[1200] bg-[var(--chrome-950)] text-white px-3.5 py-2 rounded-lg text-[13px] shadow-lg">
@@ -699,6 +656,11 @@ export default function App() {
         seuil={seuilFormAlerte}
         onChangerSeuil={setSeuilFormAlerte}
         onActiver={activerAlerte}
+        alerteArmee={alerteArmee}
+        onDesactiver={() => {
+          desarmerAlerte();
+          setPanneauOuvert(false);
+        }}
         avertissementArrierePlan={
           clePush
             ? "La notification est envoyée par le serveur : elle arrivera même si l'application est fermée ou l'écran verrouillé."
