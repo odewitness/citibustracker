@@ -36,14 +36,20 @@ export default async function () {
     const eta = minutesAvantPassage(feed, alerte);
     if (eta === null || eta > alerte.seuilMinutes) continue;
 
+    const minutes = Math.max(0, Math.round(eta));
+    const charge =
+      alerte.type === "descente"
+        ? {
+            titre: "🚌 Prépare ta descente",
+            texte: `Ligne ${alerte.nomLigne} : arrivée à ${alerte.nomArret} dans ${minutes} min`,
+          }
+        : {
+            titre: "🚌 Bus proche !",
+            texte: `Bus ligne ${alerte.nomLigne} à ${alerte.nomArret} dans ${minutes} min`,
+          };
+
     try {
-      await webpush.sendNotification(
-        abonnement,
-        JSON.stringify({
-          titre: "🚌 Bus proche !",
-          texte: `Bus ligne ${alerte.nomLigne} à ${alerte.nomArret} dans ${Math.max(0, Math.round(eta))} min`,
-        })
-      );
+      await webpush.sendNotification(abonnement, JSON.stringify(charge));
       envoyees++;
     } catch (e) {
       // 404/410 = abonnement révoqué côté navigateur : on le nettoie.

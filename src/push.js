@@ -67,7 +67,9 @@ export async function abonnerAlerte(clePublique, alerte) {
   }
 }
 
-export async function annulerAlerteServeur() {
+// Sans identifiant, le serveur retire toutes les alertes de cet abonnement ;
+// avec, seulement celle qui est visée (les autres restent surveillées).
+export async function annulerAlerteServeur(alerteId) {
   if (!pushPossible()) return;
   try {
     const enregistrement = await navigator.serviceWorker.getRegistration();
@@ -76,7 +78,7 @@ export async function annulerAlerteServeur() {
     await fetch(URL_ABONNEMENT, {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ abonnement }),
+      body: JSON.stringify(alerteId ? { abonnement, alerteId } : { abonnement }),
     });
   } catch (e) {
     /* le serveur nettoiera de lui-même à l'expiration */

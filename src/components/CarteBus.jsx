@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
-import { formaterRetard, prochainsPassages } from "../utils.js";
+import {
+  agePosition,
+  busFantome,
+  categorieRetard,
+  COULEUR_RETARD,
+  formaterAge,
+  formaterRetard,
+  prochainsPassages,
+} from "../utils.js";
 
 // Icône de bus : pastille colorée, numéro de ligne, flèche de cap si connue.
 // - direction : "0"/"1" → bordure pleine ou pointillée, pour distinguer les sens
@@ -8,20 +16,28 @@ import { formaterRetard, prochainsPassages } from "../utils.js";
 // - etat : "normal" | "selectionne" | "attenue" → mis en évidence / estompé
 //   quand l'utilisateur a tapé sur un bus précis pour le suivre parmi d'autres
 //   de la même ligne.
-function creerIconeBus(couleur, texte, cap, direction, etat) {
+function creerIconeBus(couleur, texte, cap, direction, etat, retardCat = "inconnu", fantome = false) {
   const taille = etat === "selectionne" ? 38 : 30;
   const bordure = String(direction) === "1" ? "3px dashed #fff" : "2px solid #fff";
+  // Anneau de ponctualité (vert à l'heure, ambre / rouge en retard, bleu en
+  // avance) — sauf sur le bus sélectionné, dont l'anneau ambre prime.
+  const couleurAnneau = COULEUR_RETARD[retardCat];
   const anneau =
     etat === "selectionne"
       ? "box-shadow:0 0 0 3px var(--amber-500), 0 2px 10px rgba(0,0,0,.45);"
-      : "box-shadow:0 2px 6px rgba(0,0,0,.35);";
-  const opacite = etat === "attenue" ? 0.25 : 1;
+      : retardCat !== "inconnu" && !fantome
+        ? `box-shadow:0 0 0 2px ${couleurAnneau}, 0 2px 6px rgba(0,0,0,.35);`
+        : "box-shadow:0 2px 6px rgba(0,0,0,.35);";
+  // Bus « fantôme » (position figée) : nettement estompé et désaturé pour ne pas
+  // le confondre avec un bus qui roule.
+  const opacite = fantome ? 0.35 : etat === "attenue" ? 0.25 : 1;
+  const filtre = fantome ? "filter:grayscale(0.8);" : "";
   const fleche =
-    cap !== null && cap !== undefined
+    cap !== null && cap !== undefined && !fantome
       ? `<div class="bus-cap" style="transform:translateX(-50%) rotate(${cap}deg);"></div>`
       : "";
   return L.divIcon({
-    html: `<div style="position:relative;opacity:${opacite};">${fleche}
+    html: `<div style="position:relative;opacity:${opacite};${filtre}">${fleche}
       <div style="width:${taille}px;height:${taille}px;border-radius:50%;display:flex;align-items:center;justify-content:center;
       color:#fff;font-size:${etat === "selectionne" ? 13 : 11}px;font-weight:700;border:${bordure};${anneau}
       background:${couleur};">${texte}</div></div>`,
@@ -36,7 +52,15 @@ function creerIconeBus(couleur, texte, cap, direction, etat) {
 // marqueur — sinon l'élément est recréé à chaque poll et l'animation de
 // déplacement repart de zéro.
 function cleIcone(bus, info, etat) {
-  return [info.couleur, info.nom, bus.cap, bus.direction, etat].join("|");
+  return [
+    info.couleur,
+    info.nom,
+    bus.cap,
+    bus.direction,
+    etat,
+    categorieRetard(bus.retard),
+    busFantome(bus) ? "f" : "",
+  ].join("|");
 }
 
 function appliquerIcone(entree, etat) {
@@ -44,7 +68,15 @@ function appliquerIcone(entree, etat) {
   if (entree.cleIcone === cle) return;
   entree.cleIcone = cle;
   entree.marker.setIcon(
-    creerIconeBus(entree.info.couleur, entree.info.nom, entree.bus.cap, entree.bus.direction, etat)
+    creerIconeBus(
+      entree.info.couleur,
+      entree.info.nom,
+      entree.bus.cap,
+      entree.bus.direction,
+      etat,
+      categorieRetard(entree.bus.retard),
+      busFantome(entree.bus)
+    )
   );
 }
 
@@ -60,10 +92,16 @@ function construirePopup(bus, info) {
     const cls = bus.retard > 60 ? "retard-neg" : bus.retard < -60 ? "retard-pos" : "";
     texteRetard = `<div class="${cls}">${formaterRetard(bus.retard)}</div>`;
   }
+  // Bus dont la position n'a pas été rafraîchie depuis plusieurs minutes :
+  // on le signale explicitement pour ne pas faire attendre à un arrêt.
+  const age = agePosition(bus);
+  const texteFantome = busFantome(bus)
+    ? `<div class="fantome">⚠ Position figée depuis ${formaterAge(age)}</div>`
+    : "";
   return `<div class="popup-bus"><b>Ligne ${info.nom} — Bus ${bus.label}</b>
     ${texteDestination}
     <div>Vitesse : ${bus.vitesse} km/h</div>
-    <div>${texteArret}</div>${texteRetard}</div>`;
+    <div>${texteArret}</div>${texteRetard}${texteFantome}</div>`;
 }
 
 // Construit le contenu du "tableau des prochains passages" pour un arrêt donné,
@@ -233,7 +271,15 @@ export default function CarteBus({
       }
 
       const marker = L.marker([bus.lat, bus.lon], {
-        icon: creerIconeBus(info.couleur, info.nom, bus.cap, bus.direction, etat),
+        icon: creerIconeBus(
+          info.couleur,
+          info.nom,
+          bus.cap,
+          bus.direction,
+          etat,
+          categorieRetard(bus.retard),
+          busFantome(bus)
+        ),
       }).bindPopup(construirePopup(bus, info));
       marker.on("click", () => {
         setBusSelectionneId((precedent) => (precedent === bus.id ? null : bus.id));

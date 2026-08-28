@@ -44,6 +44,7 @@ body {
 .popup-bus .destination { color: var(--chrome-700); font-weight: 600; }
 .popup-bus .retard-neg { color: var(--danger); font-weight: 600; }
 .popup-bus .retard-pos { color: var(--success); font-weight: 600; }
+.popup-bus .fantome { color: var(--danger); font-weight: 600; margin-top: 2px; }
 
 /* Masquer la barre de défilement des lignes tout en gardant le scroll tactile */
 .scrollbar-hidden { scrollbar-width: none; -webkit-overflow-scrolling: touch; }

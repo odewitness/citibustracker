@@ -24,8 +24,19 @@ export default async function (req) {
   const cle = await cleAbonnement(endpoint);
   const magasin = magasinAlertes();
 
+  // Plusieurs alertes peuvent coexister pour un même navigateur : la clé de
+  // stockage combine l'empreinte de l'abonnement et l'identifiant de l'alerte.
+  const cleAlerte = (id) => (id ? `${cle}|${id}` : cle);
+
   if (req.method === "DELETE") {
-    await magasin.delete(cle);
+    if (corps?.alerteId) {
+      await magasin.delete(cleAlerte(String(corps.alerteId)));
+    } else {
+      // Sans identifiant : on retire toutes les alertes de cet abonnement.
+      await magasin.delete(cle);
+      const { blobs } = await magasin.list({ prefix: `${cle}|` });
+      await Promise.all(blobs.map((b) => magasin.delete(b.key)));
+    }
     return Response.json({ ok: true });
   }
 
@@ -34,9 +45,11 @@ export default async function (req) {
     return Response.json({ erreur: "Alerte incomplète" }, { status: 400 });
   }
 
-  await magasin.setJSON(cle, {
+  await magasin.setJSON(cleAlerte(alerte.id ? String(alerte.id) : ""), {
     abonnement: corps.abonnement,
     alerte: {
+      id: alerte.id ? String(alerte.id) : "",
+      type: alerte.type === "descente" ? "descente" : "approche",
       routeId: String(alerte.routeId),
       direction: String(alerte.direction ?? ""),
       stopId: String(alerte.stopId),

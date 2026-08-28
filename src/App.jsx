@@ -3,8 +3,17 @@ import CarteBus from "./components/CarteBus.jsx";
 import IleStatut from "./components/IleStatut.jsx";
 import PanneauAlerte from "./components/PanneauAlerte.jsx";
 import BandeauSuivi from "./components/BandeauSuivi.jsx";
+import BandeauAlertes from "./components/BandeauAlertes.jsx";
 import PanneauArrets from "./components/PanneauArrets.jsx";
+import PanneauFavoris from "./components/PanneauFavoris.jsx";
 import { abonnerAlerte, annulerAlerteServeur, lireClePush } from "./push.js";
+import { useFavoris } from "./favoris.js";
+import {
+  useAlertesProgrammees,
+  idAlerte,
+  alerteRecurrenteADeclencher,
+  marquerRecurrenceDeclenchee,
+} from "./alertes.js";
 import {
   GROUPE_PRINCIPALES,
   GROUPE_AUTRES,
@@ -14,16 +23,32 @@ import {
   lireStockage,
   ecrireStockage,
   jouerSon,
+  busFantome,
+  lireParametresUrl,
+  construireLien,
+  partagerLien,
 } from "./utils.js";
 
 const CLE_PREFERENCES = "citibus:preferences";
 const CLE_ALERTE = "citibus:alerte";
 
+// Paramètres de lien profond (?ligne=…&sens=…&arret=…&action=…), lus une seule
+// fois au démarrage puis effacés de la barre d'adresse.
+const PARAMS_URL = lireParametresUrl();
+if (typeof window !== "undefined" && window.location.search) {
+  window.history.replaceState(null, "", window.location.pathname);
+}
+
 export default function App() {
   const preferencesInitiales = lireStockage(CLE_PREFERENCES);
   const alerteInitiale = lireStockage(CLE_ALERTE);
 
-  const [donnees, setDonnees] = useState({ vehicules: [], lignes: {}, generated_at: null });
+  const [donnees, setDonnees] = useState({
+    vehicules: [],
+    lignes: {},
+    alertes: [],
+    generated_at: null,
+  });
   const [reseau, setReseau] = useState({
     traces: {},
     arrets: {},
@@ -50,9 +75,33 @@ export default function App() {
   const lignesInitialiseesRef = useRef(false);
   const mapApiRef = useRef(null);
 
-  // --- Alerte à l'approche ---
-  const [panneauOuvert, setPanneauOuvert] = useState(false);
-  const [alerte, setAlerte] = useState(alerteInitiale); // {routeId, direction, stopId, nomArret, seuilMinutes}
+  // --- Favoris & alertes programmées ---
+  const { favoris } = useFavoris();
+  const favorisRef = useRef(favoris);
+  useEffect(() => {
+    favorisRef.current = favoris;
+  }, [favoris]);
+  const favorisAppliquesRef = useRef(false);
+  const {
+    liste: alertesProgrammees,
+    enregistrer: enregistrerAlerte,
+    supprimer: supprimerAlerteProgrammee,
+    definirRecurrence,
+  } = useAlertesProgrammees();
+  const alertesProgrammeesRef = useRef(alertesProgrammees);
+  useEffect(() => {
+    alertesProgrammeesRef.current = alertesProgrammees;
+  }, [alertesProgrammees]);
+
+  const [panneauFavorisOuvert, setPanneauFavorisOuvert] = useState(PARAMS_URL.action === "favoris");
+  const [arretCible, setArretCible] = useState(
+    PARAMS_URL.arret && PARAMS_URL.action !== "alerte" ? PARAMS_URL.arret : null
+  );
+
+  // --- Alerte à l'approche / descente ---
+  const [panneauOuvert, setPanneauOuvert] = useState(PARAMS_URL.action === "alerte");
+  const [modeAlerte, setModeAlerte] = useState(alerteInitiale?.type || "approche");
+  const [alerte, setAlerte] = useState(alerteInitiale); // {type, routeId, direction, stopId, nomArret, seuilMinutes, id}
   const [alerteArmee, setAlerteArmee] = useState(false);
   const [ligneFormAlerte, setLigneFormAlerte] = useState(alerteInitiale?.routeId || "");
   const [directionFormAlerte, setDirectionFormAlerte] = useState(alerteInitiale?.direction ?? "");
@@ -175,6 +224,10 @@ export default function App() {
           directions: data.directions || {},
           arretsParDirection: data.arrets_par_direction || {},
         });
+        // Lien profond ?arret=… : on recadre la carte sur l'arrêt visé dès que
+        // ses coordonnées sont connues.
+        const cible = PARAMS_URL.arret && data.arrets_infos?.[PARAMS_URL.arret];
+        if (cible) mapApiRef.current?.centrerSur(cible.lat, cible.lon, 16);
       })
       .catch(() => {
         /* pas grave : la carte fonctionne sans le tracé/les arrêts */
@@ -189,6 +242,43 @@ export default function App() {
       direction,
     });
   }, [lignesActives, autresMasquees, groupe, direction]);
+
+  // Une fois les lignes connues : on active les lignes favorites (elles doivent
+  // apparaître d'emblée sur la carte) et on applique le filtre d'un éventuel
+  // lien profond ?ligne=…&sens=…
+  useEffect(() => {
+    if (favorisAppliquesRef.current) return;
+    if (Object.keys(lignesInfo).length === 0) return;
+    favorisAppliquesRef.current = true;
+
+    const aAjouter = favorisRef.current.lignes.filter((id) => lignesInfo[id]);
+    if (PARAMS_URL.ligne && lignesInfo[PARAMS_URL.ligne]) aAjouter.push(PARAMS_URL.ligne);
+
+    if (aAjouter.length > 0) {
+      setLignesActives((prec) => {
+        const suivant = new Set(prec);
+        aAjouter.forEach((id) => suivant.add(id));
+        return suivant;
+      });
+      // Un lien vers une ligne « autre » doit basculer sur le bon onglet.
+      if (PARAMS_URL.ligne && !estLignePrincipale(lignesInfo[PARAMS_URL.ligne])) {
+        setGroupe(GROUPE_AUTRES);
+      }
+    }
+    if (PARAMS_URL.sens === "0" || PARAMS_URL.sens === "1") setDirection(PARAMS_URL.sens);
+  }, [lignesInfo]);
+
+  // Lien profond ?action=alerte&arret=… : préremplit le formulaire d'alerte une
+  // fois la desserte théorique connue.
+  const lienAlerteAppliqueRef = useRef(false);
+  useEffect(() => {
+    if (lienAlerteAppliqueRef.current) return;
+    if (PARAMS_URL.action !== "alerte" || !PARAMS_URL.arret) return;
+    if (Object.keys(reseau.arretsParDirection).length === 0) return;
+    lienAlerteAppliqueRef.current = true;
+    creerAlertePourArret(PARAMS_URL.arret);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reseau.arretsParDirection]);
 
   // --- Répartition des lignes entre les deux onglets ---
   const idsPrincipales = useMemo(
@@ -295,14 +385,56 @@ export default function App() {
   const recentrerSurMoi = () => localiser({ recentrer: true });
 
   // --- Panneau des arrêts (proximité + recherche) ---
-  const [panneauArretsOuvert, setPanneauArretsOuvert] = useState(false);
+  const [panneauArretsOuvert, setPanneauArretsOuvert] = useState(
+    PARAMS_URL.action === "arrets" ||
+      (Boolean(PARAMS_URL.arret) &&
+        PARAMS_URL.action !== "alerte" &&
+        PARAMS_URL.action !== "favoris")
+  );
 
   function ouvrirPanneauArrets() {
     setPanneauOuvert(false);
+    setPanneauFavorisOuvert(false);
     setPanneauArretsOuvert(true);
     // Sans position connue, la liste ne peut être triée que par nom : on tente
     // la localisation dès l'ouverture plutôt que d'attendre un second geste.
     if (!positionUtilisateur) localiser({ recentrer: false });
+  }
+
+  function ouvrirPanneauFavoris() {
+    setPanneauOuvert(false);
+    setPanneauArretsOuvert(false);
+    setPanneauFavorisOuvert(true);
+  }
+
+  // Ouvre la fiche d'un arrêt (depuis les favoris ou un lien) : recadre la carte
+  // et affiche son détail dans le panneau des arrêts.
+  function ouvrirFicheArret(arret) {
+    setArretCible(arret.stopId);
+    setPanneauFavorisOuvert(false);
+    setPanneauOuvert(false);
+    setPanneauArretsOuvert(true);
+    if (Number.isFinite(arret.lat) && Number.isFinite(arret.lon)) {
+      mapApiRef.current?.centrerSur(arret.lat, arret.lon, 16);
+    }
+  }
+
+  // Prépare le formulaire d'alerte pour un arrêt donné en devinant une ligne et
+  // un sens qui le desservent (d'après la desserte théorique).
+  function creerAlertePourArret(stopId) {
+    for (const cle of Object.keys(reseau.arretsParDirection)) {
+      if ((reseau.arretsParDirection[cle] || []).includes(stopId)) {
+        const sep = cle.lastIndexOf("|");
+        setLigneFormAlerte(cle.slice(0, sep));
+        setDirectionFormAlerte(cle.slice(sep + 1));
+        setArretFormAlerte(stopId);
+        break;
+      }
+    }
+    setPanneauArretsOuvert(false);
+    setPanneauFavorisOuvert(false);
+    setArretCible(null);
+    setPanneauOuvert(true);
   }
 
   // --- Alerte à l'approche : sens (destinations réelles) et arrêts disponibles ---
@@ -371,9 +503,82 @@ export default function App() {
     setLigneFormAlerte(ligne);
     setDirectionFormAlerte(dir);
     setArretFormAlerte(arret);
-    if (alerte) setSeuilFormAlerte(alerte.seuilMinutes);
+    if (alerte) {
+      setSeuilFormAlerte(alerte.seuilMinutes);
+      setModeAlerte(alerte.type || "approche");
+    }
     setPanneauArretsOuvert(false);
+    setPanneauFavorisOuvert(false);
     setPanneauOuvert(true);
+  }
+
+  // Changement de type d'alerte : les seuils proposés diffèrent (min. avant
+  // passage vs min. avant l'arrivée), on ramène le seuil dans le bon jeu.
+  function changerModeAlerte(mode) {
+    setModeAlerte(mode);
+    const seuilsValides = mode === "descente" ? [1, 2, 3] : [2, 5, 10];
+    if (!seuilsValides.includes(seuilFormAlerte)) {
+      setSeuilFormAlerte(mode === "descente" ? 2 : 5);
+    }
+  }
+
+  // Arme une alerte à partir d'une configuration complète. Point de passage
+  // commun au formulaire, aux alertes mémorisées et au réarmement automatique.
+  function armerAlerte(config, { silencieux = false } = {}) {
+    const type = config.type === "descente" ? "descente" : "approche";
+    const nouvelleAlerte = {
+      id: config.id || idAlerte({ ...config, type }),
+      type,
+      routeId: config.routeId,
+      direction: String(config.direction ?? ""),
+      stopId: config.stopId,
+      nomArret: config.nomArret || "",
+      seuilMinutes: config.seuilMinutes || (type === "descente" ? 2 : 5),
+    };
+    setAlerte(nouvelleAlerte);
+    setModeAlerte(type);
+    ecrireStockage(CLE_ALERTE, nouvelleAlerte);
+    setAlerteArmee(true);
+    derniereCleDeclencheeRef.current = null;
+    setSuivi({ statut: "recherche", texte: "Recherche du prochain bus…" });
+    setPanneauOuvert(false);
+
+    if (clePush) {
+      abonnerAlerte(clePush, {
+        ...nouvelleAlerte,
+        nomLigne: nomLigne(nouvelleAlerte.routeId),
+      }).then((ok) => {
+        setAlerteServeurActive(ok);
+        if (!silencieux) {
+          afficherMessage(
+            ok
+              ? "Alerte activée — tu peux fermer l'application"
+              : "Alerte activée — garde l'application ouverte"
+          );
+        }
+      });
+    } else {
+      if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+      if (!silencieux) afficherMessage("Alerte activée — garde l'application ouverte");
+    }
+  }
+
+  // Construit une configuration d'alerte depuis l'état du formulaire.
+  function configDepuisFormulaire() {
+    const nomArret =
+      arretsDisponiblesPour(ligneFormAlerte, directionFormAlerte).find(
+        ([id]) => id === arretFormAlerte
+      )?.[1] || "";
+    return {
+      type: modeAlerte,
+      routeId: ligneFormAlerte,
+      direction: directionFormAlerte,
+      stopId: arretFormAlerte,
+      nomArret,
+      seuilMinutes: seuilFormAlerte,
+    };
   }
 
   function activerAlerte() {
@@ -381,40 +586,17 @@ export default function App() {
       afficherMessage("Choisis un arrêt disponible");
       return;
     }
-    const nomArret =
-      arretsDisponiblesPour(ligneFormAlerte, directionFormAlerte).find(
-        ([id]) => id === arretFormAlerte
-      )?.[1] || "";
-    const nouvelleAlerte = {
-      routeId: ligneFormAlerte,
-      direction: directionFormAlerte,
-      stopId: arretFormAlerte,
-      nomArret,
-      seuilMinutes: seuilFormAlerte,
-    };
-    setAlerte(nouvelleAlerte);
-    ecrireStockage(CLE_ALERTE, nouvelleAlerte);
-    setAlerteArmee(true);
-    derniereCleDeclencheeRef.current = null;
-    setSuivi({ statut: "recherche", texte: "Recherche du prochain bus…" });
-    setPanneauOuvert(false);
+    armerAlerte(configDepuisFormulaire());
+  }
 
-    // Si le déploiement dispose de clés VAPID, on confie la surveillance au
-    // serveur : c'est la seule façon d'être prévenu écran verrouillé.
-    if (clePush) {
-      abonnerAlerte(clePush, { ...nouvelleAlerte, nomLigne: nomLigne(ligneFormAlerte) }).then(
-        (ok) => {
-          setAlerteServeurActive(ok);
-          afficherMessage(
-            ok
-              ? "Alerte activée — tu peux fermer l'application"
-              : "Alerte activée — garde l'application ouverte"
-          );
-        }
-      );
-    } else if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
+  function enregistrerDepuisFormulaire() {
+    if (!arretFormAlerte) {
+      afficherMessage("Choisis un arrêt disponible");
+      return;
     }
+    const config = configDepuisFormulaire();
+    enregistrerAlerte({ ...config, nomLigne: nomLigne(config.routeId) });
+    afficherMessage("Alerte enregistrée dans « Mes alertes »");
   }
 
   function desarmerAlerte() {
@@ -423,15 +605,39 @@ export default function App() {
     setAlerteArmee(false);
     setAlerteServeurActive(false);
     setSuivi(null);
-    annulerAlerteServeur();
+    annulerAlerteServeur(alerteRef.current?.id);
   }
+
+  // Réarmement automatique des alertes récurrentes : on vérifie l'horloge toutes
+  // les 30 s et on arme (en silence) la première alerte dont le créneau tombe.
+  useEffect(() => {
+    function verifier() {
+      const a = alerteRecurrenteADeclencher(alertesProgrammeesRef.current);
+      if (!a) return;
+      if (alerteArmeeRef.current && alerteRef.current?.id === a.id) return;
+      marquerRecurrenceDeclenchee(a.id);
+      armerAlerte(a, { silencieux: true });
+      afficherMessage(`Alerte « ${a.nomArret} » réarmée automatiquement`);
+    }
+    verifier();
+    const minuteur = setInterval(verifier, 30000);
+    return () => clearInterval(minuteur);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function declencherAlerte(minutesRestantes, routeId, nomArret) {
     if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
     jouerSon();
-    const texte = `Bus ligne ${nomLigne(routeId)} à ${nomArret} dans ${Math.max(0, minutesRestantes)} min`;
+    const minutes = Math.max(0, minutesRestantes);
+    const descente = alerteRef.current?.type === "descente";
+    const texte = descente
+      ? `Ligne ${nomLigne(routeId)} : arrivée à ${nomArret} dans ${minutes} min`
+      : `Bus ligne ${nomLigne(routeId)} à ${nomArret} dans ${minutes} min`;
     if ("Notification" in window && Notification.permission === "granted") {
-      new Notification("🚌 Bus proche !", { body: texte, tag: "citibus-alerte" });
+      new Notification(descente ? "🚌 Prépare ta descente" : "🚌 Bus proche !", {
+        body: texte,
+        tag: "citibus-alerte",
+      });
     }
     setSuivi({
       statut: "imminent",
@@ -491,6 +697,9 @@ export default function App() {
     (data.vehicules || []).forEach((v) => {
       if (String(v.ligne) !== String(alerteActuelle.routeId)) return;
       if (String(v.direction) !== String(alerteActuelle.direction)) return;
+      // Un bus dont la position est figée depuis plusieurs minutes donnerait un
+      // temps d'attente calculé sur des données périmées : on l'écarte du suivi.
+      if (busFantome(v)) return;
       (v.prochains_arrets || []).forEach((a) => {
         if (a.stop_id !== alerteActuelle.stopId || !a.arrivee) return;
         const etaMinutes = (a.arrivee * 1000 - Date.now()) / 60000;
@@ -537,10 +746,22 @@ export default function App() {
   // suivi, quand elle est affichée, pousse toute la pile vers le haut.
   // Une feuille ouverte (arrêts ou alerte) recouvre le bas de l'écran : laisser
   // les boutons flottants dessous les rendait visibles mais intouchables.
-  const feuilleOuverte = panneauArretsOuvert || panneauOuvert;
+  const feuilleOuverte = panneauArretsOuvert || panneauOuvert || panneauFavorisOuvert;
 
   function hauteurBouton(rang) {
     return `calc(${(suivi ? 90 : 18) + rang * 60}px + env(safe-area-inset-bottom))`;
+  }
+
+  async function partagerAlerteCourante() {
+    const lien = construireLien(window.location.origin + window.location.pathname, {
+      ligne: ligneFormAlerte,
+      sens: directionFormAlerte,
+      arret: arretFormAlerte,
+      action: "alerte",
+    });
+    const resultat = await partagerLien(lien, "Alerte bus Citibus");
+    if (resultat === "copie") afficherMessage("Lien copié");
+    else if (resultat === "echec") afficherMessage("Partage indisponible");
   }
 
   const nbVisibles = donnees.vehicules.filter(
@@ -581,6 +802,8 @@ export default function App() {
         onChangerDirection={setDirection}
       />
 
+      <BandeauAlertes alertes={donnees.alertes} lignesInfo={lignesInfo} />
+
       <BandeauSuivi
         suivi={suivi}
         couleurLigne={lignesInfo[alerte?.routeId]?.couleur}
@@ -620,9 +843,28 @@ export default function App() {
         🚏
       </button>
 
+      <button
+        onClick={ouvrirPanneauFavoris}
+        aria-label="Mes favoris"
+        className={
+          (feuilleOuverte ? "hidden " : "") +
+          "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 transition-[bottom] " +
+          (panneauFavorisOuvert
+            ? "bg-[var(--amber-500)]"
+            : "bg-white text-[var(--chrome-950)]")
+        }
+        style={{ bottom: hauteurBouton(3) }}
+      >
+        ★
+      </button>
+
       <PanneauArrets
+        key={"arrets-" + (arretCible || "liste")}
         ouvert={panneauArretsOuvert}
-        onFermer={() => setPanneauArretsOuvert(false)}
+        onFermer={() => {
+          setPanneauArretsOuvert(false);
+          setArretCible(null);
+        }}
         arretsInfos={reseau.arretsInfos}
         lignesInfo={lignesInfo}
         vehicules={donnees.vehicules}
@@ -630,6 +872,20 @@ export default function App() {
         onDemanderPosition={() => localiser({ recentrer: false })}
         positionEnCours={recentrageEnCours}
         onChoisirArret={(arret) => mapApiRef.current?.centrerSur(arret.lat, arret.lon, 16)}
+        onCreerAlerte={creerAlertePourArret}
+        arretInitial={arretCible}
+      />
+
+      <PanneauFavoris
+        ouvert={panneauFavorisOuvert}
+        onFermer={() => setPanneauFavorisOuvert(false)}
+        arretsInfos={reseau.arretsInfos}
+        lignesInfo={lignesInfo}
+        vehicules={donnees.vehicules}
+        lignesActives={lignesActivesCourantes}
+        onChoisirArret={ouvrirFicheArret}
+        onCreerAlerte={creerAlertePourArret}
+        onBasculerAffichageLigne={basculerLigne}
       />
 
       <PanneauAlerte
@@ -637,6 +893,14 @@ export default function App() {
         onFermer={() => setPanneauOuvert(false)}
         lignesInfo={lignesInfo}
         ids={idsAlerte}
+        mode={modeAlerte}
+        onChangerMode={changerModeAlerte}
+        onPartager={partagerAlerteCourante}
+        onEnregistrer={enregistrerDepuisFormulaire}
+        alertesProgrammees={alertesProgrammees}
+        onArmerProgrammee={(a) => armerAlerte(a)}
+        onSupprimerProgrammee={supprimerAlerteProgrammee}
+        onDefinirRecurrence={definirRecurrence}
         ligneChoisie={ligneFormAlerte}
         onChangerLigne={(id) => {
           setLigneFormAlerte(id);

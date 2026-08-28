@@ -4,6 +4,91 @@ const { chargerBase } = require("./_lib/gtfs-statique.js");
 // Flux temps réel (positions des bus + horaires)
 const FEED_URL = "https://feed-citibus-narbonne.ratpdev.com/GTFS-RT/gtfs-rt.bin";
 
+// Libellés lisibles des effets d'une alerte trafic (enum GTFS-RT Alert.Effect).
+const EFFETS = {
+  NO_SERVICE: "Ligne interrompue",
+  REDUCED_SERVICE: "Service réduit",
+  SIGNIFICANT_DELAYS: "Retards importants",
+  DETOUR: "Déviation",
+  ADDITIONAL_SERVICE: "Service renforcé",
+  MODIFIED_SERVICE: "Service modifié",
+  STOP_MOVED: "Arrêt déplacé",
+  NO_EFFECT: "Information",
+  ACCESSIBILITY_ISSUE: "Accessibilité réduite",
+};
+
+// protobuf.js décode les enum en nombre : on retrouve le nom via la table
+// de l'enum pour tolérer aussi bien 4 que "DETOUR".
+const NOMS_EFFET = protobuf.transit_realtime.Alert.Effect || {};
+function nomEffet(valeur) {
+  if (typeof valeur === "string") return valeur;
+  return Object.keys(NOMS_EFFET).find((nom) => NOMS_EFFET[nom] === valeur) || null;
+}
+
+// Un champ TranslatedString GTFS-RT porte plusieurs traductions : on prend le
+// français si présent, sinon la première disponible.
+function texteTraduit(champ) {
+  const traductions = champ && champ.translation;
+  if (!traductions || traductions.length === 0) return "";
+  const fr = traductions.find((t) => (t.language || "").toLowerCase().startsWith("fr"));
+  return (fr || traductions[0]).text || "";
+}
+
+// Extrait les alertes trafic (entity.alert) du flux : déviations, arrêts non
+// desservis, lignes suspendues… Jusque-là décodées mais jamais exploitées.
+function extraireAlertes(feed, nomsArrets) {
+  const maintenant = Math.floor(Date.now() / 1000);
+  const alertes = [];
+
+  feed.entity.forEach((entity) => {
+    const a = entity.alert;
+    if (!a) return;
+
+    // Une alerte sans période active est considérée en cours ; sinon il faut
+    // qu'au moins une fenêtre couvre l'instant présent.
+    const periodes = a.activePeriod || [];
+    const active =
+      periodes.length === 0 ||
+      periodes.some((p) => {
+        const debut = p.start ? Number(p.start) : 0;
+        const fin = p.end ? Number(p.end) : Infinity;
+        return debut <= maintenant && maintenant <= fin;
+      });
+    if (!active) return;
+
+    const lignes = [];
+    const arrets = [];
+    (a.informedEntity || []).forEach((cible) => {
+      if (cible.routeId && !lignes.includes(String(cible.routeId))) {
+        lignes.push(String(cible.routeId));
+      }
+      if (cible.stopId && !arrets.some((s) => s.stopId === cible.stopId)) {
+        arrets.push({ stopId: cible.stopId, nom: nomsArrets[cible.stopId] || cible.stopId });
+      }
+    });
+
+    const titre = texteTraduit(a.headerText);
+    const description = texteTraduit(a.descriptionText);
+    if (!titre && !description) return;
+
+    const cleEffet = nomEffet(a.effect);
+    alertes.push({
+      id: entity.id || `${titre}|${lignes.join(",")}`,
+      effet: (cleEffet && EFFETS[cleEffet]) || null,
+      effetBrut: cleEffet,
+      titre,
+      description,
+      url: texteTraduit(a.url) || null,
+      lignes,
+      arrets,
+      debut: periodes[0]?.start ? Number(periodes[0].start) : null,
+      fin: periodes[0]?.end ? Number(periodes[0].end) : null,
+    });
+  });
+
+  return alertes;
+}
+
 exports.handler = async function () {
   try {
     // Socle seulement : cette fonction est appelée toutes les 15 s, elle n'a
@@ -99,6 +184,11 @@ exports.handler = async function () {
       const tripId = v.trip ? v.trip.tripId : null;
       const destination = tripId ? destinationsParTrip[tripId] || null : null;
 
+      // Horodatage de la position (VehiclePosition.timestamp) : permet au client
+      // de repérer un « bus fantôme » dont la position n'a pas bougé depuis
+      // plusieurs minutes — flux figé, on n'attend pas ce bus pour rien.
+      const horodatage = v.timestamp ? Number(v.timestamp) : null;
+
       vehicules.push({
         id: vid,
         label: (v.vehicle && v.vehicle.label) || vid,
@@ -112,8 +202,11 @@ exports.handler = async function () {
         prochain_arret: prochainArret,
         retard: retard,
         prochains_arrets: prochainsArrets,
+        horodatage: horodatage,
       });
     });
+
+    const alertes = extraireAlertes(feed, arrets);
 
     return {
       statusCode: 200,
@@ -131,6 +224,7 @@ exports.handler = async function () {
         }),
         vehicules: vehicules,
         lignes: lignes,
+        alertes: alertes,
       }),
     };
   } catch (e) {
@@ -141,3 +235,7 @@ exports.handler = async function () {
     };
   }
 };
+
+// Exposés pour les tests unitaires.
+exports.extraireAlertes = extraireAlertes;
+exports.texteTraduit = texteTraduit;

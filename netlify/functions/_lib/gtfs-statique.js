@@ -15,6 +15,7 @@ const GTFS_STATIQUE_URL =
 let cacheZip = null;
 let cacheBase = null;
 let cacheReseau = null;
+let cacheHoraires = null;
 
 function splitCsvLine(line) {
   const result = [];
@@ -249,4 +250,108 @@ async function chargerReseau() {
   return cacheReseau;
 }
 
-module.exports = { chargerBase, chargerReseau, parseCsv };
+// --- Horaires théoriques : heures de passage par arrêt + calendrier. ---
+// Sert la fiche horaire d'un arrêt quand aucun bus ne circule (tôt le matin,
+// le soir, le dimanche) — précisément le moment où on en a besoin.
+// stop_times.txt est volumineux : cette étape n'est chargée que par la fonction
+// dédiée, jamais par le poll temps réel.
+
+// "H:MM:SS" (parfois > 24h pour les courses après minuit) → secondes depuis minuit.
+function versSecondes(hms) {
+  if (!hms) return null;
+  const m = /^(\d{1,3}):(\d{2}):(\d{2})$/.exec(hms.trim());
+  if (!m) return null;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+}
+
+async function chargerHoraires() {
+  if (cacheHoraires) return cacheHoraires;
+  const zip = await ouvrirZip();
+
+  // trip_id -> ligne / sens / service / destination
+  const infoTrip = {};
+  lireTable(zip, "trips.txt").forEach((row) => {
+    if (!row.trip_id) return;
+    infoTrip[row.trip_id] = {
+      routeId: row.route_id || "",
+      directionId: row.direction_id || "0",
+      serviceId: row.service_id || "",
+      headsign: row.trip_headsign || "",
+    };
+  });
+
+  const horairesParArret = {}; // stop_id -> [{ sec, routeId, directionId, serviceId, headsign }]
+  lireTable(zip, "stop_times.txt").forEach((row) => {
+    if (!row.trip_id || !row.stop_id) return;
+    const info = infoTrip[row.trip_id];
+    if (!info) return;
+    const sec = versSecondes(row.departure_time || row.arrival_time);
+    if (sec === null) return;
+    if (!horairesParArret[row.stop_id]) horairesParArret[row.stop_id] = [];
+    horairesParArret[row.stop_id].push({
+      sec,
+      routeId: info.routeId,
+      directionId: info.directionId,
+      serviceId: info.serviceId,
+      headsign: info.headsign,
+    });
+  });
+  Object.keys(horairesParArret).forEach((id) =>
+    horairesParArret[id].sort((a, b) => a.sec - b.sec)
+  );
+
+  // calendar.txt : jours de circulation réguliers de chaque service.
+  // L'index 0 = dimanche, pour coller à Date.getDay()/getUTCDay().
+  const calendrier = lireTable(zip, "calendar.txt").map((row) => ({
+    serviceId: row.service_id,
+    jours: [
+      row.sunday,
+      row.monday,
+      row.tuesday,
+      row.wednesday,
+      row.thursday,
+      row.friday,
+      row.saturday,
+    ].map((v) => v === "1"),
+    debut: row.start_date || "",
+    fin: row.end_date || "",
+  }));
+
+  // calendar_dates.txt : exceptions (1 = service ajouté ce jour, 2 = retiré).
+  const exceptions = {}; // "serviceId|YYYYMMDD" -> "1" | "2"
+  lireTable(zip, "calendar_dates.txt").forEach((row) => {
+    if (!row.service_id || !row.date) return;
+    exceptions[row.service_id + "|" + row.date] = row.exception_type;
+  });
+
+  cacheHoraires = { horairesParArret, calendrier, exceptions };
+  return cacheHoraires;
+}
+
+// Ensemble des service_id actifs à une date donnée (YYYYMMDD, jourSemaine 0-6
+// avec 0 = dimanche).
+function servicesActifs(horaires, dateYYYYMMDD, jourSemaine) {
+  const actifs = new Set();
+  (horaires.calendrier || []).forEach((c) => {
+    const dansPeriode =
+      (!c.debut || dateYYYYMMDD >= c.debut) && (!c.fin || dateYYYYMMDD <= c.fin);
+    if (dansPeriode && c.jours[jourSemaine]) actifs.add(c.serviceId);
+  });
+  Object.keys(horaires.exceptions || {}).forEach((cle) => {
+    const sep = cle.lastIndexOf("|");
+    if (cle.slice(sep + 1) !== dateYYYYMMDD) return;
+    const serviceId = cle.slice(0, sep);
+    if (horaires.exceptions[cle] === "1") actifs.add(serviceId);
+    else if (horaires.exceptions[cle] === "2") actifs.delete(serviceId);
+  });
+  return actifs;
+}
+
+module.exports = {
+  chargerBase,
+  chargerReseau,
+  chargerHoraires,
+  servicesActifs,
+  versSecondes,
+  parseCsv,
+};

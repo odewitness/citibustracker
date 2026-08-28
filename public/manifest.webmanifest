@@ -1,15 +1,40 @@
 {
+  "id": "/",
   "name": "Bus Citibus — Le Grand Narbonne",
   "short_name": "Citibus",
   "description": "Suivi en temps réel des bus Citibus (Le Grand Narbonne)",
+  "lang": "fr",
+  "dir": "ltr",
+  "categories": ["travel", "navigation", "utilities"],
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait",
   "background_color": "#0B2430",
   "theme_color": "#0B2430",
   "icons": [
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Alerte à l'approche",
+      "short_name": "Alerte",
+      "url": "/?action=alerte",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Arrêts proches",
+      "short_name": "Arrêts",
+      "url": "/?action=arrets",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Mes favoris",
+      "short_name": "Favoris",
+      "url": "/?action=favoris",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
   ]
 }

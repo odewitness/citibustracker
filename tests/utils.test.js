@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  agePosition,
+  busFantome,
+  categorieRetard,
+  construireLien,
   distanceMetres,
   estLignePrincipale,
   formaterDistance,
   formaterRetard,
+  lireParametresUrl,
   normaliserTexte,
   prochainsPassages,
   trierParNom,
@@ -61,6 +66,52 @@ describe("trierParNom", () => {
   it("trie 2 avant 10 (tri naturel)", () => {
     const lignes = { a: { nom: "10" }, b: { nom: "2" }, c: { nom: "S3" } };
     expect(trierParNom(["a", "b", "c"], lignes)).toEqual(["b", "a", "c"]);
+  });
+});
+
+describe("categorieRetard", () => {
+  it("classe l'avance, l'heure, le retard léger et le retard fort", () => {
+    expect(categorieRetard(null)).toBe("inconnu");
+    expect(categorieRetard(-120)).toBe("avance");
+    expect(categorieRetard(0)).toBe("heure");
+    expect(categorieRetard(45)).toBe("heure");
+    expect(categorieRetard(180)).toBe("leger");
+    expect(categorieRetard(600)).toBe("fort");
+  });
+});
+
+describe("agePosition / busFantome", () => {
+  const maintenant = 1_700_000_000_000;
+  it("mesure l'âge d'une position et repère un flux figé", () => {
+    expect(agePosition({ horodatage: maintenant / 1000 - 30 }, maintenant)).toBe(30);
+    expect(busFantome({ horodatage: maintenant / 1000 - 30 }, maintenant)).toBe(false);
+    expect(busFantome({ horodatage: maintenant / 1000 - 600 }, maintenant)).toBe(true);
+  });
+  it("tolère l'absence d'horodatage", () => {
+    expect(agePosition({}, maintenant)).toBeNull();
+    expect(busFantome({}, maintenant)).toBe(false);
+  });
+});
+
+describe("construireLien / lireParametresUrl", () => {
+  it("construit un lien profond et le relit à l'identique", () => {
+    const lien = construireLien("https://x.fr/", {
+      ligne: "2",
+      sens: "0",
+      arret: "ABC",
+      action: "alerte",
+    });
+    expect(lien).toBe("https://x.fr/?ligne=2&sens=0&arret=ABC&action=alerte");
+    expect(lireParametresUrl("?ligne=2&sens=0&arret=ABC&action=alerte")).toEqual({
+      ligne: "2",
+      sens: "0",
+      arret: "ABC",
+      action: "alerte",
+    });
+  });
+  it("omet les paramètres vides", () => {
+    expect(construireLien("https://x.fr/", { ligne: "3" })).toBe("https://x.fr/?ligne=3");
+    expect(construireLien("https://x.fr/", {})).toBe("https://x.fr/");
   });
 });
 

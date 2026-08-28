@@ -47,6 +47,89 @@ export function formaterRetard(retardSecondes) {
   return retardSecondes > 0 ? `retard de ${minutes} min` : `avance de ${minutes} min`;
 }
 
+// --- Ponctualité : catégorie + couleur d'un retard (en secondes) ---
+// Sert à colorer la pastille des bus sur la carte d'un coup d'œil.
+export const COULEUR_RETARD = {
+  avance: "#1A73E8", // en avance sur l'horaire
+  heure: "#2E7D32", // à l'heure (± 1 min)
+  leger: "#E8A13C", // retard modéré (< 5 min)
+  fort: "#C4432B", // retard important
+  inconnu: "#5B6B72", // pas d'info de retard
+};
+
+export function categorieRetard(retardSecondes) {
+  if (retardSecondes === null || retardSecondes === undefined) return "inconnu";
+  if (retardSecondes <= -60) return "avance";
+  if (retardSecondes < 60) return "heure";
+  if (retardSecondes <= 300) return "leger";
+  return "fort";
+}
+
+// --- Bus « fantôme » : position figée depuis trop longtemps ---
+// Le flux renvoie parfois des véhicules dont l'horodatage ne bouge plus (bus au
+// dépôt, perte de signal). On les repère pour ne pas afficher un temps
+// d'attente calculé sur une position qui n'est plus vraie.
+const SEUIL_FANTOME_SECONDES = 150;
+
+export function agePosition(vehicule, maintenant = Date.now()) {
+  if (!vehicule || !vehicule.horodatage) return null;
+  return Math.max(0, Math.round(maintenant / 1000 - vehicule.horodatage));
+}
+
+export function busFantome(vehicule, maintenant = Date.now()) {
+  const age = agePosition(vehicule, maintenant);
+  return age !== null && age > SEUIL_FANTOME_SECONDES;
+}
+
+export function formaterAge(secondes) {
+  if (secondes === null || secondes === undefined) return "";
+  if (secondes < 60) return `${secondes} s`;
+  return `${Math.round(secondes / 60)} min`;
+}
+
+// --- Liens profonds / partage ---
+// Une URL du type ?ligne=2&sens=0&arret=ABC ouvre l'app préfiltrée, voire le
+// formulaire d'alerte prérempli (action=alerte). Symétrique de construireLien.
+export function lireParametresUrl(recherche) {
+  const params = new URLSearchParams(
+    recherche ?? (typeof window !== "undefined" ? window.location.search : "")
+  );
+  const obj = {};
+  ["ligne", "sens", "arret", "action"].forEach((cle) => {
+    const valeur = params.get(cle);
+    if (valeur) obj[cle] = valeur;
+  });
+  return obj;
+}
+
+export function construireLien(base, { ligne, sens, arret, action } = {}) {
+  const params = new URLSearchParams();
+  if (ligne) params.set("ligne", ligne);
+  if (sens !== undefined && sens !== null && sens !== "") params.set("sens", String(sens));
+  if (arret) params.set("arret", arret);
+  if (action) params.set("action", action);
+  const requete = params.toString();
+  return requete ? `${base}?${requete}` : base;
+}
+
+// Partage natif si disponible, repli sur le presse-papier. Renvoie
+// "partage" | "copie" | "echec" pour que l'appelant affiche le bon message.
+export async function partagerLien(url, titre = "Bus Citibus") {
+  try {
+    if (typeof navigator !== "undefined" && navigator.share) {
+      await navigator.share({ title: titre, url });
+      return "partage";
+    }
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      await navigator.clipboard.writeText(url);
+      return "copie";
+    }
+  } catch (e) {
+    /* l'utilisateur a annulé, ou API indisponible */
+  }
+  return "echec";
+}
+
 export function jouerSon() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
