@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   agePosition,
+  arretsProches,
   busFantome,
   categorieRetard,
   construireLien,
@@ -182,6 +183,31 @@ describe("formaterTempsMarche", () => {
   it("formate en « N min à pied », vide si inconnu", () => {
     expect(formaterTempsMarche(375)).toBe("5 min à pied");
     expect(formaterTempsMarche(null)).toBe("");
+  });
+});
+
+describe("arretsProches", () => {
+  const arretsInfos = {
+    A: { nom: "Gare", lat: 43.19, lon: 3.0, pmr: true },
+    B: { nom: "Théâtre", lat: 43.18, lon: 3.0 },
+    C: { nom: "Hôpital", lat: 43.3, lon: 3.2 },
+  };
+  const position = { lat: 43.18, lon: 3.0 };
+
+  it("classe par distance croissante et limite le nombre", () => {
+    const r = arretsProches(arretsInfos, position, { limite: 2 });
+    expect(r.map((a) => a.stopId)).toEqual(["B", "A"]);
+    expect(r[0].distance).toBe(0);
+    expect(r[1].pmr).toBe(true);
+  });
+
+  it("exclut les arrêts demandés (favoris déjà listés ailleurs)", () => {
+    const r = arretsProches(arretsInfos, position, { exclure: ["B"] });
+    expect(r.map((a) => a.stopId)).toEqual(["A", "C"]);
+  });
+
+  it("renvoie une liste vide sans position", () => {
+    expect(arretsProches(arretsInfos, null)).toEqual([]);
   });
 });
 

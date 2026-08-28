@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 // Fiche horaire théorique d'un arrêt (d'après le GTFS statique) : les prochains
 // passages prévus au calendrier, même quand aucun bus ne circule. Chargée à la
 // demande depuis la fonction horaires-arret.
-export default function HorairesTheoriques({ stopId, lignesInfo = {} }) {
+export default function HorairesTheoriques({ stopId, lignesInfo = {}, max = Infinity }) {
   // L'état retient l'arrêt auquel il correspond : tant qu'il ne coïncide pas
   // avec stopId, on affiche « chargement » sans avoir à réinitialiser dans
   // le corps de l'effet.
@@ -58,7 +58,7 @@ export default function HorairesTheoriques({ stopId, lignesInfo = {} }) {
       {etat.pmrArret === true && (
         <p className="text-[11px] text-[var(--ink-muted)] py-1">♿ Arrêt accessible UFR</p>
       )}
-      {etat.passages.map((p, i) => {
+      {etat.passages.slice(0, max).map((p, i) => {
         const info = lignesInfo[p.routeId] || {
           nom: p.ligne,
           couleur: p.couleur || "var(--chrome-800)",

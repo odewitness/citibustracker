@@ -12,6 +12,17 @@ const DIRECTIONS = [
   ["1", "Sens 1"],
 ];
 
+function GrilleIcone() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" className="w-4 h-4">
+      <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1.2" fill="currentColor" />
+      <rect x="9" y="1.5" width="5.5" height="5.5" rx="1.2" fill="currentColor" />
+      <rect x="1.5" y="9" width="5.5" height="5.5" rx="1.2" fill="currentColor" />
+      <rect x="9" y="9" width="5.5" height="5.5" rx="1.2" fill="currentColor" />
+    </svg>
+  );
+}
+
 function Chevron({ ouvert }) {
   return (
     <svg
@@ -36,6 +47,7 @@ export default function IleStatut({
   onToutMasquer,
   direction,
   onChangerDirection,
+  onRetourTableau,
 }) {
   // Les filtres sont repliés par défaut : l'encadré ne mange plus la carte,
   // et l'essentiel (nombre de bus + heure de mise à jour) reste toujours visible.
@@ -48,25 +60,40 @@ export default function IleStatut({
   return (
     <div className="fixed top-0 left-0 right-0 z-[1100] flex justify-center px-3 pt-safe pt-3">
       <div className="w-full max-w-md rounded-2xl bg-[var(--chrome-950)]/95 backdrop-blur shadow-lg shadow-black/30 text-white overflow-hidden">
-        {/* Barre compacte, toujours visible : statut + accès aux filtres */}
-        <button
-          onClick={() => setOuvert((o) => !o)}
-          aria-expanded={ouvert}
-          aria-label={ouvert ? "Masquer les filtres" : "Afficher les filtres"}
-          className="w-full flex items-center gap-2.5 px-3.5 h-11 text-left"
-        >
-          <span className="w-[7px] h-[7px] rounded-full bg-[var(--amber-500)] animate-pouls shrink-0" />
-          <span className="flex-1 min-w-0 truncate font-signage text-[13px] font-semibold">
-            {statutTexte}
-          </span>
-          <span className="shrink-0 flex items-center gap-1.5 rounded-full bg-white/12 pl-2.5 pr-2 py-1 text-[11.5px] font-semibold">
-            {ongletCourant.labelCourt}
-            <span className="tabular-nums text-white/70">
-              {nbActives}/{ids.length}
+        {/* Barre compacte, toujours visible : retour au tableau de bord,
+            statut et accès aux filtres. */}
+        <div className="w-full flex items-center h-11">
+          {onRetourTableau && (
+            <button
+              onClick={onRetourTableau}
+              aria-label="Revenir au tableau de bord"
+              className="shrink-0 h-full pl-3 pr-1.5 flex items-center text-white/90 active:opacity-60"
+            >
+              <GrilleIcone />
+            </button>
+          )}
+          <button
+            onClick={() => setOuvert((o) => !o)}
+            aria-expanded={ouvert}
+            aria-label={ouvert ? "Masquer les filtres" : "Afficher les filtres"}
+            className={
+              "flex-1 min-w-0 flex items-center gap-2.5 pr-3.5 h-full text-left " +
+              (onRetourTableau ? "pl-1.5" : "pl-3.5")
+            }
+          >
+            <span className="w-[7px] h-[7px] rounded-full bg-[var(--amber-500)] animate-pouls shrink-0" />
+            <span className="flex-1 min-w-0 truncate font-signage text-[13px] font-semibold">
+              {statutTexte}
             </span>
-            <Chevron ouvert={ouvert} />
-          </span>
-        </button>
+            <span className="shrink-0 flex items-center gap-1.5 rounded-full bg-white/12 pl-2.5 pr-2 py-1 text-[11.5px] font-semibold">
+              {ongletCourant.labelCourt}
+              <span className="tabular-nums text-white/70">
+                {nbActives}/{ids.length}
+              </span>
+              <Chevron ouvert={ouvert} />
+            </span>
+          </button>
+        </div>
 
         {ouvert && (
           <div className="px-3 pb-3 flex flex-col gap-2">

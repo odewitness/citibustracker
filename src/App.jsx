@@ -7,6 +7,7 @@ import BandeauSuivi from "./components/BandeauSuivi.jsx";
 import BandeauAlertes from "./components/BandeauAlertes.jsx";
 import PanneauArrets from "./components/PanneauArrets.jsx";
 import PanneauFavoris from "./components/PanneauFavoris.jsx";
+import TableauDeBord from "./components/TableauDeBord.jsx";
 import { abonnerAlerte, annulerAlerteServeur, lireClePush } from "./push.js";
 import { useFavoris } from "./favoris.js";
 import {
@@ -78,6 +79,14 @@ export default function App() {
 
   // Bus dont la fiche « trajet complet » est ouverte (sélection sur la carte).
   const [busSelectionneId, setBusSelectionneId] = useState(null);
+
+  // Écran affiché : tableau de bord (accueil) ou carte plein écran. On rouvre
+  // sur le dernier écran quitté ; un lien profond force la carte pour montrer
+  // directement la ligne, l'arrêt ou le formulaire d'alerte ciblés.
+  const [ecran, setEcran] = useState(() => {
+    if (PARAMS_URL.ligne || PARAMS_URL.arret || PARAMS_URL.action) return "carte";
+    return preferencesInitiales?.ecran === "carte" ? "carte" : "tableau";
+  });
 
   // --- Favoris & alertes programmées ---
   const { favoris } = useFavoris();
@@ -247,8 +256,9 @@ export default function App() {
       autresMasquees: Array.from(autresMasquees),
       groupe,
       direction,
+      ecran,
     });
-  }, [lignesActives, autresMasquees, groupe, direction]);
+  }, [lignesActives, autresMasquees, groupe, direction, ecran]);
 
   // Une fois les lignes connues : on active les lignes favorites (elles doivent
   // apparaître d'emblée sur la carte) et on applique le filtre d'un éventuel
@@ -550,6 +560,8 @@ export default function App() {
     retardAvertiRef.current = null;
     setSuivi({ statut: "recherche", texte: "Recherche du prochain bus…" });
     setPanneauOuvert(false);
+    // Le suivi vit sur la carte (bandeau + recentrage) : on y bascule.
+    setEcran("carte");
 
     if (clePush) {
       abonnerAlerte(clePush, {
@@ -817,21 +829,26 @@ export default function App() {
         onChangerBusSelectionne={setBusSelectionneId}
       />
 
-      <IleStatut
-        statutTexte={statutTexte}
-        lignesInfo={lignesInfo}
-        ids={idsCourants}
-        lignesActives={lignesActivesCourantes}
-        onBasculerLigne={basculerLigne}
-        groupe={groupe}
-        onChangerGroupe={setGroupe}
-        onToutAfficher={toutAfficher}
-        onToutMasquer={toutMasquer}
-        direction={direction}
-        onChangerDirection={setDirection}
-      />
+      {ecran === "carte" && (
+        <>
+          <IleStatut
+            statutTexte={statutTexte}
+            lignesInfo={lignesInfo}
+            ids={idsCourants}
+            lignesActives={lignesActivesCourantes}
+            onBasculerLigne={basculerLigne}
+            groupe={groupe}
+            onChangerGroupe={setGroupe}
+            onToutAfficher={toutAfficher}
+            onToutMasquer={toutMasquer}
+            direction={direction}
+            onChangerDirection={setDirection}
+            onRetourTableau={() => setEcran("tableau")}
+          />
 
-      <BandeauAlertes alertes={donnees.alertes} lignesInfo={lignesInfo} />
+          <BandeauAlertes alertes={donnees.alertes} lignesInfo={lignesInfo} />
+        </>
+      )}
 
       <BandeauSuivi
         suivi={suivi}
@@ -846,46 +863,50 @@ export default function App() {
         </div>
       )}
 
-      <button
-        onClick={ouvrirPanneauAlerte}
-        aria-label="Alerte à l'approche"
-        className={
-          (feuilleOuverte ? "hidden " : "") +
-          "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 transition-[bottom] " +
-          (alerteArmee ? "bg-[var(--amber-500)]" : "bg-white text-[var(--chrome-950)]")
-        }
-        style={{ bottom: hauteurBouton(1) }}
-      >
-        🔔
-      </button>
+      {ecran === "carte" && (
+        <>
+          <button
+            onClick={ouvrirPanneauAlerte}
+            aria-label="Alerte à l'approche"
+            className={
+              (feuilleOuverte ? "hidden " : "") +
+              "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 transition-[bottom] " +
+              (alerteArmee ? "bg-[var(--amber-500)]" : "bg-white text-[var(--chrome-950)]")
+            }
+            style={{ bottom: hauteurBouton(1) }}
+          >
+            🔔
+          </button>
 
-      <button
-        onClick={ouvrirPanneauArrets}
-        aria-label="Arrêts proches et recherche"
-        className={
-          (feuilleOuverte ? "hidden " : "") +
-          "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 transition-[bottom] " +
-          (panneauArretsOuvert ? "bg-[var(--amber-500)]" : "bg-white text-[var(--chrome-950)]")
-        }
-        style={{ bottom: hauteurBouton(2) }}
-      >
-        🚏
-      </button>
+          <button
+            onClick={ouvrirPanneauArrets}
+            aria-label="Arrêts proches et recherche"
+            className={
+              (feuilleOuverte ? "hidden " : "") +
+              "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 transition-[bottom] " +
+              (panneauArretsOuvert ? "bg-[var(--amber-500)]" : "bg-white text-[var(--chrome-950)]")
+            }
+            style={{ bottom: hauteurBouton(2) }}
+          >
+            🚏
+          </button>
 
-      <button
-        onClick={ouvrirPanneauFavoris}
-        aria-label="Mes favoris"
-        className={
-          (feuilleOuverte ? "hidden " : "") +
-          "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 transition-[bottom] " +
-          (panneauFavorisOuvert
-            ? "bg-[var(--amber-500)]"
-            : "bg-white text-[var(--chrome-950)]")
-        }
-        style={{ bottom: hauteurBouton(3) }}
-      >
-        ★
-      </button>
+          <button
+            onClick={ouvrirPanneauFavoris}
+            aria-label="Mes favoris"
+            className={
+              (feuilleOuverte ? "hidden " : "") +
+              "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 transition-[bottom] " +
+              (panneauFavorisOuvert
+                ? "bg-[var(--amber-500)]"
+                : "bg-white text-[var(--chrome-950)]")
+            }
+            style={{ bottom: hauteurBouton(3) }}
+          >
+            ★
+          </button>
+        </>
+      )}
 
       <FicheBus
         bus={busSuivi}
@@ -976,18 +997,46 @@ export default function App() {
         }
       />
 
-      <button
-        onClick={recentrerSurMoi}
-        aria-label="Centrer sur ma position"
-        className={
-          (feuilleOuverte ? "hidden " : "") +
-          "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 bg-[var(--amber-500)] text-[var(--chrome-950)] transition-[bottom] " +
-          (recentrageEnCours ? "opacity-60" : "")
-        }
-        style={{ bottom: hauteurBouton(0) }}
-      >
-        ◉
-      </button>
+      {ecran === "carte" && (
+        <button
+          onClick={recentrerSurMoi}
+          aria-label="Centrer sur ma position"
+          className={
+            (feuilleOuverte ? "hidden " : "") +
+            "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 bg-[var(--amber-500)] text-[var(--chrome-950)] transition-[bottom] " +
+            (recentrageEnCours ? "opacity-60" : "")
+          }
+          style={{ bottom: hauteurBouton(0) }}
+        >
+          ◉
+        </button>
+      )}
+
+      {ecran === "tableau" && (
+        <TableauDeBord
+          arretsInfos={reseau.arretsInfos}
+          lignesInfo={lignesInfo}
+          vehicules={donnees.vehicules}
+          alertes={donnees.alertes}
+          generatedAt={donnees.generated_at}
+          erreur={erreur}
+          position={positionUtilisateur}
+          onDemanderPosition={() => localiser({ recentrer: false })}
+          positionEnCours={recentrageEnCours}
+          alertesProgrammees={alertesProgrammees}
+          onArmerProgrammee={(a) => armerAlerte(a)}
+          suiviActif={Boolean(suivi)}
+          onOuvrirCarte={() => setEcran("carte")}
+          onOuvrirArret={(arret) => {
+            setEcran("carte");
+            ouvrirFicheArret(arret);
+          }}
+          onCreerAlerte={(stopId) => {
+            setEcran("carte");
+            creerAlertePourArret(stopId);
+          }}
+        />
+      )}
     </div>
   );
 }

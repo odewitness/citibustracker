@@ -6,6 +6,11 @@ Netlify, données issues des flux GTFS et GTFS-RT du réseau.
 
 ## Fonctionnalités
 
+- **Tableau de bord** (écran d'accueil) : prochains départs des arrêts favoris
+  (repli sur l'horaire théorique), arrêts proches avec temps de marche, infos
+  trafic des lignes suivies, réarmement d'une alerte mémorisée. L'app rouvre sur
+  le dernier écran quitté (tableau de bord ou carte) ; un lien profond ouvre
+  directement la carte. Bouton ▦ dans la barre de statut pour y revenir.
 - **Carte temps réel** : véhicules, tracés, arrêts cliquables. Les bus sont
   cerclés selon leur ponctualité (bleu en avance, vert à l'heure, ambre / rouge
   en retard). L'état de la position est nuancé : *récente*, *un peu ancienne*,
@@ -47,11 +52,13 @@ Le site de production se déploie automatiquement depuis la branche `main`.
 
 ## Architecture
 
-- `src/` — application React. `App.jsx` orchestre l'état, `CarteBus.jsx` gère
-  Leaflet, les panneaux (`IleStatut`, `PanneauArrets`, `PanneauAlerte`,
+- `src/` — application React. `App.jsx` orchestre l'état (dont `ecran` :
+  `"tableau"` ou `"carte"`, mémorisé), `CarteBus.jsx` gère Leaflet, les panneaux
+  (`TableauDeBord`, `IleStatut`, `PanneauArrets`, `PanneauAlerte`,
   `PanneauFavoris`, `BandeauAlertes`, `BandeauSuivi`, `HorairesTheoriques`,
-  `FicheBus`) sont purement présentationnels. La sélection d'un bus sur la carte
-  est pilotée par `App` (`busSelectionneId`) et alimente `FicheBus`.
+  `FicheBus`) sont purement présentationnels. La carte reste montée en fond ; le
+  tableau de bord la recouvre. La sélection d'un bus est pilotée par `App`
+  (`busSelectionneId`) et alimente `FicheBus`.
 - `src/favoris.js` / `src/alertes.js` — état local partagé (favoris, alertes
   programmées) exposé via des hooks avec un mini-bus d'événements.
 - `netlify/functions/bus-data.js` — flux temps réel, appelé toutes les 15 s.

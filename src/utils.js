@@ -244,6 +244,28 @@ export const LIBELLE_OCCUPATION = {
   fort: "Bondé",
 };
 
+// Les arrêts les plus proches d'une position (tableau de bord, liste des
+// arrêts). `exclure` sert à ne pas répéter les arrêts déjà mis en favori.
+export function arretsProches(arretsInfos, position, { exclure = [], limite = 5 } = {}) {
+  if (!position || !arretsInfos) return [];
+  const exclus = new Set(exclure);
+  return Object.keys(arretsInfos)
+    .filter((id) => !exclus.has(id))
+    .map((id) => {
+      const a = arretsInfos[id];
+      return {
+        stopId: id,
+        nom: a.nom,
+        lat: a.lat,
+        lon: a.lon,
+        pmr: a.pmr ?? null,
+        distance: distanceMetres(position.lat, position.lon, a.lat, a.lon),
+      };
+    })
+    .sort((x, y) => x.distance - y.distance)
+    .slice(0, limite);
+}
+
 // Prochains passages à un arrêt, reconstitués depuis les bus en circulation.
 // Utilisé à la fois par le popup de la carte et par le panneau des arrêts.
 export function prochainsPassages(stopId, vehicules) {
