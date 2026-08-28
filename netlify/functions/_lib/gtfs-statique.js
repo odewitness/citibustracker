@@ -4,9 +4,17 @@ const AdmZip = require("adm-zip");
 const GTFS_STATIQUE_URL =
   "https://s3.eu-west-1.amazonaws.com/files.orchestra.ratpdev.com/networks/narbonne/exports/scolaires-sans-tad.zip";
 
-// Cache en mémoire, partagé par toutes les fonctions qui importent ce module
-// tant que l'instance reste "chaude" entre deux appels.
-let cache = null;
+// Caches en mémoire, partagés par toutes les fonctions qui importent ce module
+// tant que l'instance reste « chaude » entre deux appels.
+//
+// Le parsing est découpé en deux : bus-data.js n'a besoin que des noms d'arrêts,
+// des lignes et des destinations (stops/routes/trips), alors que shapes.txt et
+// stop_times.txt — de loin les plus gros fichiers de l'archive — ne servent qu'au
+// tracé du réseau. Les parser dans bus-data revenait à payer plusieurs secondes
+// de démarrage à froid sur un appel répété toutes les 15 secondes.
+let cacheZip = null;
+let cacheBase = null;
+let cacheReseau = null;
 
 function splitCsvLine(line) {
   const result = [];
@@ -39,129 +47,206 @@ function parseCsv(text) {
   });
 }
 
-async function charger() {
-  if (cache) return cache;
-
+async function ouvrirZip() {
+  if (cacheZip) return cacheZip;
   const resp = await fetch(GTFS_STATIQUE_URL);
   if (!resp.ok) {
     throw new Error("Téléchargement GTFS statique échoué : " + resp.status);
   }
   const buffer = Buffer.from(await resp.arrayBuffer());
-  const zip = new AdmZip(buffer);
+  cacheZip = new AdmZip(buffer);
+  return cacheZip;
+}
+
+// Lit une entrée du ZIP, ou [] si le fichier est absent de l'archive.
+function lireTable(zip, nomFichier) {
+  const entree = zip.getEntry(nomFichier);
+  return entree ? parseCsv(entree.getData().toString("utf8")) : [];
+}
+
+// Choisit, parmi plusieurs libellés observés, le plus fréquent : une même
+// direction porte parfois des trip_headsign légèrement différents selon les
+// courses, on veut la destination habituelle.
+function libelleMajoritaire(compteurs) {
+  let meilleur = null;
+  let meilleurNombre = -1;
+  compteurs.forEach((nombre, libelle) => {
+    if (nombre > meilleurNombre) {
+      meilleur = libelle;
+      meilleurNombre = nombre;
+    }
+  });
+  return meilleur;
+}
+
+// --- Socle : arrêts, lignes, destinations. Rapide (petits fichiers). ---
+async function chargerBase() {
+  if (cacheBase) return cacheBase;
+  const zip = await ouvrirZip();
 
   const arrets = {}; // stop_id -> nom
   const arretsPosition = {}; // stop_id -> {nom, lat, lon}
+  lireTable(zip, "stops.txt").forEach((row) => {
+    const nom = row.stop_name || row.stop_id;
+    arrets[row.stop_id] = nom;
+    const lat = parseFloat(row.stop_lat);
+    const lon = parseFloat(row.stop_lon);
+    if (row.stop_id && !isNaN(lat) && !isNaN(lon)) {
+      arretsPosition[row.stop_id] = { nom, lat, lon };
+    }
+  });
+
   const lignes = {}; // route_id -> {nom, couleur}
+  lireTable(zip, "routes.txt").forEach((row) => {
+    const nom = row.route_short_name || row.route_long_name || row.route_id;
+    const couleur = row.route_color || "";
+    lignes[row.route_id] = { nom: nom, couleur: couleur ? "#" + couleur : "#0078d4" };
+  });
 
-  const stopsEntry = zip.getEntry("stops.txt");
-  if (stopsEntry) {
-    parseCsv(stopsEntry.getData().toString("utf8")).forEach((row) => {
-      const nom = row.stop_name || row.stop_id;
-      arrets[row.stop_id] = nom;
-      const lat = parseFloat(row.stop_lat);
-      const lon = parseFloat(row.stop_lon);
-      if (row.stop_id && !isNaN(lat) && !isNaN(lon)) {
-        arretsPosition[row.stop_id] = { nom, lat, lon };
-      }
-    });
-  }
-
-  const routesEntry = zip.getEntry("routes.txt");
-  if (routesEntry) {
-    parseCsv(routesEntry.getData().toString("utf8")).forEach((row) => {
-      const nom = row.route_short_name || row.route_long_name || row.route_id;
-      const couleur = row.route_color || "";
-      lignes[row.route_id] = {
-        nom: nom,
-        couleur: couleur ? "#" + couleur : "#0078d4",
-      };
-    });
-  }
-
-  // trips.txt associe chaque trip_id à une ligne (route_id), un tracé (shape_id)
-  // et une destination réelle (trip_headsign).
+  // trips.txt associe chaque trip_id à une ligne (route_id), un sens
+  // (direction_id), un tracé (shape_id) et une destination (trip_headsign).
   const destinationsParTrip = {};
-  const shapeIdParRouteDirection = {}; // "route_id|direction_id" -> Set(shape_id)
-  const tripIdVersRoute = {}; // trip_id -> route_id (pour joindre stop_times.txt ensuite)
-  const tripsEntry = zip.getEntry("trips.txt");
-  if (tripsEntry) {
-    parseCsv(tripsEntry.getData().toString("utf8")).forEach((row) => {
-      if (row.trip_id && row.trip_headsign) {
-        destinationsParTrip[row.trip_id] = row.trip_headsign;
-      }
-      if (row.trip_id && row.route_id) {
-        tripIdVersRoute[row.trip_id] = row.route_id;
-      }
-      if (row.route_id && row.shape_id) {
-        const dir = row.direction_id || "0";
-        const cle = row.route_id + "|" + dir;
-        if (!shapeIdParRouteDirection[cle]) shapeIdParRouteDirection[cle] = new Set();
-        shapeIdParRouteDirection[cle].add(row.shape_id);
-      }
-    });
-  }
+  const tripIdVersCle = {}; // trip_id -> "route_id|direction_id"
+  const shapeIdParCle = {}; // "route_id|direction_id" -> Set(shape_id)
+  const libellesParCle = {}; // "route_id|direction_id" -> Map(headsign -> nombre)
 
-  // shapes.txt contient les points géographiques de chaque tracé, à assembler
-  // dans l'ordre de shape_pt_sequence pour dessiner l'itinéraire complet.
-  const pointsParShape = {}; // shape_id -> [{seq, lat, lon}]
-  const shapesEntry = zip.getEntry("shapes.txt");
-  if (shapesEntry) {
-    parseCsv(shapesEntry.getData().toString("utf8")).forEach((row) => {
-      const lat = parseFloat(row.shape_pt_lat);
-      const lon = parseFloat(row.shape_pt_lon);
-      const seq = parseInt(row.shape_pt_sequence, 10);
-      if (!row.shape_id || isNaN(lat) || isNaN(lon)) return;
-      if (!pointsParShape[row.shape_id]) pointsParShape[row.shape_id] = [];
-      pointsParShape[row.shape_id].push({ seq: isNaN(seq) ? 0 : seq, lat, lon });
-    });
-  }
-  const shapes = {}; // shape_id -> [[lat, lon], ...] trié par séquence
+  lireTable(zip, "trips.txt").forEach((row) => {
+    if (!row.trip_id) return;
+    if (row.trip_headsign) destinationsParTrip[row.trip_id] = row.trip_headsign;
+    if (!row.route_id) return;
+
+    const dir = row.direction_id || "0";
+    const cle = row.route_id + "|" + dir;
+    tripIdVersCle[row.trip_id] = cle;
+
+    if (row.shape_id) {
+      if (!shapeIdParCle[cle]) shapeIdParCle[cle] = new Set();
+      shapeIdParCle[cle].add(row.shape_id);
+    }
+    if (row.trip_headsign) {
+      if (!libellesParCle[cle]) libellesParCle[cle] = new Map();
+      const compteurs = libellesParCle[cle];
+      compteurs.set(row.trip_headsign, (compteurs.get(row.trip_headsign) || 0) + 1);
+    }
+  });
+
+  // Sens desservis par ligne, avec leur destination habituelle : c'est ce qui
+  // permet au panneau d'alerte de proposer une direction même quand aucun bus
+  // ne circule (tôt le matin, le dimanche…).
+  const directionsParLigne = {}; // route_id -> [[direction_id, libellé], ...]
+  Object.keys(tripIdVersCle).forEach((tripId) => {
+    const cle = tripIdVersCle[tripId];
+    const separateur = cle.lastIndexOf("|");
+    const routeId = cle.slice(0, separateur);
+    const dir = cle.slice(separateur + 1);
+    if (!directionsParLigne[routeId]) directionsParLigne[routeId] = {};
+    if (!directionsParLigne[routeId][dir]) {
+      directionsParLigne[routeId][dir] =
+        libelleMajoritaire(libellesParCle[cle] || new Map()) || "Sens " + dir;
+    }
+  });
+  Object.keys(directionsParLigne).forEach((routeId) => {
+    directionsParLigne[routeId] = Object.keys(directionsParLigne[routeId])
+      .sort()
+      .map((dir) => [dir, directionsParLigne[routeId][dir]]);
+  });
+
+  cacheBase = {
+    arrets,
+    arretsPosition,
+    lignes,
+    destinationsParTrip,
+    directionsParLigne,
+    tripIdVersCle,
+    shapeIdParCle,
+  };
+  return cacheBase;
+}
+
+// --- Réseau : tracés et arrêts desservis. Lourd (shapes.txt + stop_times.txt). ---
+async function chargerReseau() {
+  if (cacheReseau) return cacheReseau;
+  const zip = await ouvrirZip();
+  const { arretsPosition, tripIdVersCle, shapeIdParCle } = await chargerBase();
+
+  // shapes.txt : points géographiques de chaque tracé, à assembler dans l'ordre
+  // de shape_pt_sequence pour dessiner l'itinéraire complet.
+  const pointsParShape = {};
+  lireTable(zip, "shapes.txt").forEach((row) => {
+    const lat = parseFloat(row.shape_pt_lat);
+    const lon = parseFloat(row.shape_pt_lon);
+    const seq = parseInt(row.shape_pt_sequence, 10);
+    if (!row.shape_id || isNaN(lat) || isNaN(lon)) return;
+    if (!pointsParShape[row.shape_id]) pointsParShape[row.shape_id] = [];
+    pointsParShape[row.shape_id].push({ seq: isNaN(seq) ? 0 : seq, lat, lon });
+  });
+  // Les coordonnées sont arrondies à 5 décimales (~1 m) : la précision brute du
+  // GTFS n'apporte rien à l'écran et pèse lourd dans la réponse.
+  const arrondir = (n) => Math.round(n * 1e5) / 1e5;
+  const shapes = {};
   Object.keys(pointsParShape).forEach((shapeId) => {
     shapes[shapeId] = pointsParShape[shapeId]
       .sort((a, b) => a.seq - b.seq)
-      .map((p) => [p.lat, p.lon]);
+      .map((p) => [arrondir(p.lat), arrondir(p.lon)]);
   });
 
-  // Tracés par ligne ET par direction (permet un affichage plein/pointillé selon le sens)
   const tracesParLigne = {}; // route_id -> { direction_id: [[[lat,lon], ...], ...] }
-  Object.keys(shapeIdParRouteDirection).forEach((cle) => {
-    const separateurIdx = cle.lastIndexOf("|");
-    const routeId = cle.slice(0, separateurIdx);
-    const dir = cle.slice(separateurIdx + 1);
+  Object.keys(shapeIdParCle).forEach((cle) => {
+    const separateur = cle.lastIndexOf("|");
+    const routeId = cle.slice(0, separateur);
+    const dir = cle.slice(separateur + 1);
     if (!tracesParLigne[routeId]) tracesParLigne[routeId] = {};
-    tracesParLigne[routeId][dir] = Array.from(shapeIdParRouteDirection[cle])
+    tracesParLigne[routeId][dir] = Array.from(shapeIdParCle[cle])
       .map((sid) => shapes[sid])
       .filter(Boolean);
   });
 
-  // stop_times.txt : on ne garde que l'association route_id -> ensemble de
-  // stop_id desservis (pas les horaires eux-mêmes, déjà couverts par le flux
-  // temps réel), pour savoir quels arrêts afficher sur la carte par ligne.
-  const arretIdsParRoute = {}; // route_id -> Set(stop_id)
-  const stopTimesEntry = zip.getEntry("stop_times.txt");
-  if (stopTimesEntry) {
-    parseCsv(stopTimesEntry.getData().toString("utf8")).forEach((row) => {
-      const routeId = tripIdVersRoute[row.trip_id];
-      if (!routeId || !row.stop_id) return;
-      if (!arretIdsParRoute[routeId]) arretIdsParRoute[routeId] = new Set();
-      arretIdsParRoute[routeId].add(row.stop_id);
-    });
-  }
-  const arretsParLigne = {}; // route_id -> [{stop_id, nom, lat, lon}, ...]
-  Object.keys(arretIdsParRoute).forEach((routeId) => {
-    arretsParLigne[routeId] = Array.from(arretIdsParRoute[routeId])
-      .map((stopId) => (arretsPosition[stopId] ? { stop_id: stopId, ...arretsPosition[stopId] } : null))
-      .filter(Boolean);
+  // stop_times.txt : on ne garde pas les horaires (déjà couverts par le temps
+  // réel), seulement la séquence d'arrêts de chaque course. Pour chaque
+  // ligne+sens on retient la course la plus complète : elle sert de desserte de
+  // référence, dans l'ordre du trajet — bien plus lisible qu'une liste triée
+  // par ordre alphabétique dans le sélecteur d'arrêt.
+  const arretsParTrip = {};
+  lireTable(zip, "stop_times.txt").forEach((row) => {
+    if (!row.trip_id || !row.stop_id || !tripIdVersCle[row.trip_id]) return;
+    const seq = parseInt(row.stop_sequence, 10);
+    if (!arretsParTrip[row.trip_id]) arretsParTrip[row.trip_id] = [];
+    arretsParTrip[row.trip_id].push({ seq: isNaN(seq) ? 0 : seq, stopId: row.stop_id });
   });
 
-  cache = {
-    arrets,
-    lignes,
-    destinationsParTrip,
-    tracesParLigne,
-    arretsParLigne,
-  };
-  return cache;
+  const courseDeReference = {}; // cle -> trip_id
+  Object.keys(arretsParTrip).forEach((tripId) => {
+    const cle = tripIdVersCle[tripId];
+    if (!cle) return;
+    const actuelle = courseDeReference[cle];
+    if (!actuelle || arretsParTrip[tripId].length > arretsParTrip[actuelle].length) {
+      courseDeReference[cle] = tripId;
+    }
+  });
+
+  // On ne transporte que des identifiants d'arrêts : leurs nom et coordonnées
+  // sont envoyés une seule fois dans un dictionnaire commun (arretsPosition),
+  // au lieu d'être répétés pour chaque ligne et chaque sens qui les desservent.
+  const arretsParLigneDirection = {}; // "route_id|direction_id" -> [stop_id, ...]
+  const arretIdsParRoute = {}; // route_id -> Set(stop_id)
+  Object.keys(courseDeReference).forEach((cle) => {
+    const routeId = cle.slice(0, cle.lastIndexOf("|"));
+    const ordonnes = arretsParTrip[courseDeReference[cle]]
+      .sort((a, b) => a.seq - b.seq)
+      .map((a) => a.stopId)
+      .filter((stopId) => arretsPosition[stopId]);
+    arretsParLigneDirection[cle] = ordonnes;
+    if (!arretIdsParRoute[routeId]) arretIdsParRoute[routeId] = new Set();
+    ordonnes.forEach((stopId) => arretIdsParRoute[routeId].add(stopId));
+  });
+
+  const arretsParLigne = {}; // route_id -> [stop_id, ...]
+  Object.keys(arretIdsParRoute).forEach((routeId) => {
+    arretsParLigne[routeId] = Array.from(arretIdsParRoute[routeId]);
+  });
+
+  cacheReseau = { tracesParLigne, arretsParLigne, arretsParLigneDirection };
+  return cacheReseau;
 }
 
-module.exports = { charger, parseCsv };
+module.exports = { chargerBase, chargerReseau, parseCsv };

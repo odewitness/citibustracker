@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import CarteBus from "./components/CarteBus.jsx";
 import IleStatut from "./components/IleStatut.jsx";
 import PanneauAlerte from "./components/PanneauAlerte.jsx";
+import PanneauArrets from "./components/PanneauArrets.jsx";
+import { abonnerAlerte, annulerAlerteServeur, lireClePush } from "./push.js";
 import {
   GROUPE_PRINCIPALES,
   GROUPE_AUTRES,
@@ -22,7 +24,13 @@ export default function App() {
   const alerteInitiale = lireStockage(CLE_ALERTE);
 
   const [donnees, setDonnees] = useState({ vehicules: [], lignes: {}, generated_at: null });
-  const [reseau, setReseau] = useState({ traces: {}, arrets: {} });
+  const [reseau, setReseau] = useState({
+    traces: {},
+    arrets: {},
+    arretsInfos: {},
+    directions: {},
+    arretsParDirection: {},
+  });
   const [lignesInfo, setLignesInfo] = useState({});
   const [lignesActives, setLignesActives] = useState(
     new Set(preferencesInitiales?.lignesActives || [])
@@ -50,6 +58,10 @@ export default function App() {
   const [directionFormAlerte, setDirectionFormAlerte] = useState(alerteInitiale?.direction ?? "");
   const [arretFormAlerte, setArretFormAlerte] = useState(alerteInitiale?.stopId || "");
   const [seuilFormAlerte, setSeuilFormAlerte] = useState(alerteInitiale?.seuilMinutes || 5);
+  // Clé VAPID du déploiement : non nulle = le serveur peut surveiller l'alerte
+  // et notifier même application fermée.
+  const [clePush, setClePush] = useState(null);
+  const [alerteServeurActive, setAlerteServeurActive] = useState(false);
 
   // État structuré du suivi affiché dans la carte du bas (plutôt qu'une simple chaîne,
   // pour pouvoir afficher séparément horaire prévu / retard / temps restant)
@@ -62,8 +74,14 @@ export default function App() {
   const alerteRef = useRef(alerte);
   const alerteArmeeRef = useRef(alerteArmee);
   const derniereCleDeclencheeRef = useRef(null);
+  // Idem pour les noms de lignes : verifierAlerte() est appelée depuis la boucle
+  // de polling, dont la closure date du premier rendu — sans ce miroir, elle lit
+  // un lignesInfo vide et affiche l'identifiant GTFS brut à la place du numéro.
+  const lignesInfoRef = useRef(lignesInfo);
+  const minuteurDesarmementRef = useRef(null);
   useEffect(() => { alerteRef.current = alerte; }, [alerte]);
   useEffect(() => { alerteArmeeRef.current = alerteArmee; }, [alerteArmee]);
+  useEffect(() => { lignesInfoRef.current = lignesInfo; }, [lignesInfo]);
 
   function afficherMessage(texte) {
     setMessageFlash(texte);
@@ -72,11 +90,13 @@ export default function App() {
   }
 
   function nomLigne(routeId) {
-    return lignesInfo[routeId]?.nom || routeId || "?";
+    return lignesInfoRef.current[routeId]?.nom || routeId || "?";
   }
 
   // --- Récupération des données (toutes les 15s) ---
   useEffect(() => {
+    let minuteur = null;
+
     async function recuperer() {
       try {
         const r = await fetch("/.netlify/functions/bus-data");
@@ -109,10 +129,36 @@ export default function App() {
         setErreur("Connexion perdue");
       }
     }
-    recuperer();
-    const id = setInterval(recuperer, 15000);
-    return () => clearInterval(id);
+    function demarrer() {
+      if (minuteur) return;
+      recuperer();
+      minuteur = setInterval(recuperer, 15000);
+    }
+    function arreter() {
+      clearInterval(minuteur);
+      minuteur = null;
+    }
+
+    // Inutile d'interroger le serveur toutes les 15 s quand l'app est en
+    // arrière-plan ou l'écran éteint : c'est de la batterie et des données
+    // mobiles pour un écran que personne ne regarde. On garde le polling
+    // uniquement si une alerte est armée (le suivi doit rester à jour).
+    function surChangementVisibilite() {
+      if (document.visibilityState === "visible") demarrer();
+      else if (!alerteArmeeRef.current) arreter();
+    }
+
+    demarrer();
+    document.addEventListener("visibilitychange", surChangementVisibilite);
+    return () => {
+      arreter();
+      document.removeEventListener("visibilitychange", surChangementVisibilite);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    lireClePush().then(setClePush);
   }, []);
 
   // Données réseau (tracés + arrêts) : quasi-statiques, récupérées une seule fois
@@ -122,7 +168,13 @@ export default function App() {
       .then((r) => r.json())
       .then((data) => {
         if (data.erreur) return;
-        setReseau({ traces: data.traces || {}, arrets: data.arrets || {} });
+        setReseau({
+          traces: data.traces || {},
+          arrets: data.arrets || {},
+          arretsInfos: data.arrets_infos || {},
+          directions: data.directions || {},
+          arretsParDirection: data.arrets_par_direction || {},
+        });
       })
       .catch(() => {
         /* pas grave : la carte fonctionne sans le tracé/les arrêts */
@@ -150,15 +202,24 @@ export default function App() {
   // Onglet « autres bus » : toutes les lignes hors réseau urbain qui ont au moins
   // un véhicule dans le flux temps réel — inutile de lister les centaines de
   // lignes scolaires du GTFS qui ne circulent pas à cette heure-ci.
+  // Dépend d'une clé textuelle stable et non du tableau de véhicules, qui est
+  // remplacé à chaque relevé : sans cela, la liste (donc l'ensemble des lignes
+  // actives) changeait d'identité toutes les 15 s et faisait redessiner tout le
+  // réseau — tracés et arrêts compris — sans qu'aucune ligne n'ait bougé.
+  const cleLignesEnCirculation = useMemo(
+    () => Array.from(new Set(donnees.vehicules.map((v) => String(v.ligne)))).sort().join(","),
+    [donnees.vehicules]
+  );
+
   const idsAutres = useMemo(() => {
-    const enCirculation = new Set(donnees.vehicules.map((v) => String(v.ligne)));
+    const enCirculation = new Set(cleLignesEnCirculation.split(","));
     return trierParNom(
       Object.keys(lignesInfo).filter(
         (id) => !estLignePrincipale(lignesInfo[id]) && enCirculation.has(id)
       ),
       lignesInfo
     );
-  }, [lignesInfo, donnees.vehicules]);
+  }, [lignesInfo, cleLignesEnCirculation]);
 
   const idsCourants = groupe === GROUPE_AUTRES ? idsAutres : idsPrincipales;
 
@@ -203,9 +264,13 @@ export default function App() {
     else setLignesActives(new Set());
   }
 
-  // --- Recentrage sur ma position ---
+  // --- Position de l'utilisateur ---
+  // Mémorisée (et pas seulement utilisée pour recentrer la carte) : c'est elle
+  // qui permet de classer les arrêts par proximité dans le panneau des arrêts.
   const [recentrageEnCours, setRecentrageEnCours] = useState(false);
-  function recentrerSurMoi() {
+  const [positionUtilisateur, setPositionUtilisateur] = useState(null);
+
+  function localiser({ recentrer }) {
     if (!navigator.geolocation) {
       afficherMessage("Géolocalisation non supportée par ce navigateur");
       return;
@@ -214,8 +279,10 @@ export default function App() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setRecentrageEnCours(false);
-        mapApiRef.current?.centrerSur(pos.coords.latitude, pos.coords.longitude, 16);
-        mapApiRef.current?.afficherPositionUtilisateur(pos.coords.latitude, pos.coords.longitude);
+        const position = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        setPositionUtilisateur(position);
+        mapApiRef.current?.afficherPositionUtilisateur(position.lat, position.lon);
+        if (recentrer) mapApiRef.current?.centrerSur(position.lat, position.lon, 16);
       },
       () => {
         setRecentrageEnCours(false);
@@ -225,9 +292,39 @@ export default function App() {
     );
   }
 
+  const recentrerSurMoi = () => localiser({ recentrer: true });
+
+  // --- Panneau des arrêts (proximité + recherche) ---
+  const [panneauArretsOuvert, setPanneauArretsOuvert] = useState(false);
+
+  function ouvrirPanneauArrets() {
+    setPanneauOuvert(false);
+    setPanneauArretsOuvert(true);
+    // Sans position connue, la liste ne peut être triée que par nom : on tente
+    // la localisation dès l'ouverture plutôt que d'attendre un second geste.
+    if (!positionUtilisateur) localiser({ recentrer: false });
+  }
+
   // --- Alerte à l'approche : sens (destinations réelles) et arrêts disponibles ---
+  // Les sens et les arrêts viennent des horaires théoriques (GTFS statique) et
+  // non des bus en circulation : sinon le panneau est vide dès qu'aucun bus ne
+  // roule — tôt le matin, le soir, le dimanche — c'est-à-dire précisément quand
+  // on veut programmer une alerte. Le temps réel ne sert qu'à préciser la
+  // destination affichée.
   function directionsDisponiblesPour(routeId) {
-    const dispo = new Map(); // direction -> libellé (destination réelle si connue)
+    const libellesTempsReel = new Map();
+    donnees.vehicules.forEach((v) => {
+      if (String(v.ligne) !== String(routeId) || !v.destination) return;
+      libellesTempsReel.set(String(v.direction), v.destination);
+    });
+
+    const theoriques = reseau.directions[routeId] || [];
+    if (theoriques.length > 0) {
+      return theoriques.map(([dir, libelle]) => [dir, libellesTempsReel.get(dir) || libelle]);
+    }
+
+    // Repli si le réseau théorique n'est pas (encore) chargé
+    const dispo = new Map();
     donnees.vehicules.forEach((v) => {
       if (String(v.ligne) !== String(routeId)) return;
       const dir = String(v.direction);
@@ -239,6 +336,12 @@ export default function App() {
   }
 
   function arretsDisponiblesPour(routeId, dir) {
+    // Desserte de référence, dans l'ordre du trajet
+    const idsTheoriques = reseau.arretsParDirection[routeId + "|" + dir] || [];
+    if (idsTheoriques.length > 0) {
+      return idsTheoriques.map((stopId) => [stopId, reseau.arretsInfos[stopId]?.nom || stopId]);
+    }
+
     const dispo = new Map();
     donnees.vehicules.forEach((v) => {
       if (String(v.ligne) !== String(routeId)) return;
@@ -269,6 +372,7 @@ export default function App() {
     setDirectionFormAlerte(dir);
     setArretFormAlerte(arret);
     if (alerte) setSeuilFormAlerte(alerte.seuilMinutes);
+    setPanneauArretsOuvert(false);
     setPanneauOuvert(true);
   }
 
@@ -295,14 +399,31 @@ export default function App() {
     setSuivi({ statut: "recherche", texte: "Recherche du prochain bus…" });
     setPanneauOuvert(false);
 
-    if ("Notification" in window && Notification.permission === "default") {
+    // Si le déploiement dispose de clés VAPID, on confie la surveillance au
+    // serveur : c'est la seule façon d'être prévenu écran verrouillé.
+    if (clePush) {
+      abonnerAlerte(clePush, { ...nouvelleAlerte, nomLigne: nomLigne(ligneFormAlerte) }).then(
+        (ok) => {
+          setAlerteServeurActive(ok);
+          afficherMessage(
+            ok
+              ? "Alerte activée — tu peux fermer l'application"
+              : "Alerte activée — garde l'application ouverte"
+          );
+        }
+      );
+    } else if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
   }
 
   function desarmerAlerte() {
+    clearTimeout(minuteurDesarmementRef.current);
+    minuteurDesarmementRef.current = null;
     setAlerteArmee(false);
+    setAlerteServeurActive(false);
     setSuivi(null);
+    annulerAlerteServeur();
   }
 
   function declencherAlerte(minutesRestantes, routeId, nomArret) {
@@ -313,8 +434,44 @@ export default function App() {
       new Notification("🚌 Bus proche !", { body: texte, tag: "citibus-alerte" });
     }
     setSuivi({ statut: "imminent", texte });
-    setTimeout(() => desarmerAlerte(), 90000);
+    // Un seul minuteur à la fois : sans ce nettoyage, réarmer une alerte dans
+    // les 90 s laissait l'ancien minuteur désarmer la nouvelle.
+    clearTimeout(minuteurDesarmementRef.current);
+    minuteurDesarmementRef.current = setTimeout(() => desarmerAlerte(), 90000);
   }
+
+  // Tant qu'une alerte est armée, on demande au navigateur de garder l'écran
+  // allumé : la boucle de suivi est gelée dès que la page passe en arrière-plan,
+  // donc un téléphone verrouillé ne peut pas sonner. Le verrou est perdu à
+  // chaque passage en arrière-plan, d'où la reprise sur visibilitychange.
+  useEffect(() => {
+    // Inutile quand le serveur surveille l'alerte : la notification arrivera
+    // toute seule, autant laisser l'écran s'éteindre.
+    if (!alerteArmee || alerteServeurActive || !("wakeLock" in navigator)) return;
+    let annule = false;
+    let verrou = null;
+
+    async function demander() {
+      try {
+        const nouveau = await navigator.wakeLock.request("screen");
+        if (annule) nouveau.release().catch(() => {});
+        else verrou = nouveau;
+      } catch (e) {
+        /* refusé (batterie faible, onglet masqué…) : tant pis */
+      }
+    }
+    function surVisibilite() {
+      if (document.visibilityState === "visible") demander();
+    }
+
+    demander();
+    document.addEventListener("visibilitychange", surVisibilite);
+    return () => {
+      annule = true;
+      document.removeEventListener("visibilitychange", surVisibilite);
+      verrou?.release().catch(() => {});
+    };
+  }, [alerteArmee, alerteServeurActive]);
 
   // Recalcule l'état de l'alerte à chaque nouvelle donnée reçue
   function verifierAlerte(data) {
@@ -370,6 +527,16 @@ export default function App() {
     }
   }
 
+  // Boutons flottants empilés du bas vers le haut (0 = le plus bas). La carte de
+  // suivi, quand elle est affichée, pousse toute la pile vers le haut.
+  // Une feuille ouverte (arrêts ou alerte) recouvre le bas de l'écran : laisser
+  // les boutons flottants dessous les rendait visibles mais intouchables.
+  const feuilleOuverte = panneauArretsOuvert || panneauOuvert;
+
+  function hauteurBouton(rang) {
+    return `calc(${(suivi ? 90 : 18) + rang * 60}px + env(safe-area-inset-bottom))`;
+  }
+
   const nbVisibles = donnees.vehicules.filter(
     (b) =>
       lignesActivesCourantes.has(String(b.ligne)) &&
@@ -390,6 +557,7 @@ export default function App() {
         direction={direction}
         traces={reseau.traces}
         arretsParLigne={reseau.arrets}
+        arretsInfos={reseau.arretsInfos}
         mapApiRef={mapApiRef}
       />
 
@@ -473,17 +641,39 @@ export default function App() {
         onClick={ouvrirPanneauAlerte}
         aria-label="Alerte à l'approche"
         className={
+          (feuilleOuverte ? "hidden " : "") +
           "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 transition-[bottom] " +
           (alerteArmee ? "bg-[var(--amber-500)]" : "bg-white text-[var(--chrome-950)]")
         }
-        style={{
-          bottom: suivi
-            ? "calc(150px + env(safe-area-inset-bottom))"
-            : "calc(78px + env(safe-area-inset-bottom))",
-        }}
+        style={{ bottom: hauteurBouton(1) }}
       >
         🔔
       </button>
+
+      <button
+        onClick={ouvrirPanneauArrets}
+        aria-label="Arrêts proches et recherche"
+        className={
+          (feuilleOuverte ? "hidden " : "") +
+          "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 transition-[bottom] " +
+          (panneauArretsOuvert ? "bg-[var(--amber-500)]" : "bg-white text-[var(--chrome-950)]")
+        }
+        style={{ bottom: hauteurBouton(2) }}
+      >
+        🚏
+      </button>
+
+      <PanneauArrets
+        ouvert={panneauArretsOuvert}
+        onFermer={() => setPanneauArretsOuvert(false)}
+        arretsInfos={reseau.arretsInfos}
+        lignesInfo={lignesInfo}
+        vehicules={donnees.vehicules}
+        position={positionUtilisateur}
+        onDemanderPosition={() => localiser({ recentrer: false })}
+        positionEnCours={recentrageEnCours}
+        onChoisirArret={(arret) => mapApiRef.current?.centrerSur(arret.lat, arret.lon, 16)}
+      />
 
       <PanneauAlerte
         ouvert={panneauOuvert}
@@ -509,20 +699,22 @@ export default function App() {
         seuil={seuilFormAlerte}
         onChangerSeuil={setSeuilFormAlerte}
         onActiver={activerAlerte}
+        avertissementArrierePlan={
+          clePush
+            ? "La notification est envoyée par le serveur : elle arrivera même si l'application est fermée ou l'écran verrouillé."
+            : "L'alerte ne peut sonner que si l'application reste ouverte — l'écran est maintenu allumé pendant le suivi."
+        }
       />
 
       <button
         onClick={recentrerSurMoi}
         aria-label="Centrer sur ma position"
         className={
+          (feuilleOuverte ? "hidden " : "") +
           "fixed right-3.5 z-[1050] w-12 h-12 rounded-full shadow-lg flex items-center justify-center text-xl leading-none active:scale-95 bg-[var(--amber-500)] text-[var(--chrome-950)] transition-[bottom] " +
           (recentrageEnCours ? "opacity-60" : "")
         }
-        style={{
-          bottom: suivi
-            ? "calc(90px + env(safe-area-inset-bottom))"
-            : "max(18px, env(safe-area-inset-bottom))",
-        }}
+        style={{ bottom: hauteurBouton(0) }}
       >
         ◉
       </button>

@@ -14,6 +14,7 @@ export default function PanneauAlerte({
   seuil,
   onChangerSeuil,
   onActiver,
+  avertissementArrierePlan,
 }) {
   if (!ouvert) return null;
 
@@ -80,7 +81,11 @@ export default function PanneauAlerte({
           <option value={10}>10 minutes</option>
         </select>
 
-        <div className="flex gap-2 mt-4">
+        <p className="mt-3 text-[11.5px] leading-snug text-[var(--ink-muted)]">
+          {avertissementArrierePlan}
+        </p>
+
+        <div className="flex gap-2 mt-3">
           <button
             onClick={onFermer}
             className="flex-1 py-2.5 rounded-lg text-[13.5px] bg-[var(--line)] text-[var(--ink)]"

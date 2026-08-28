@@ -1,6 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App.jsx";
+// Empaqueté avec l'application plutôt que chargé depuis unpkg : une panne du
+// CDN affichait une carte cassée, et c'était une requête bloquante de plus.
+import "leaflet/dist/leaflet.css";
 import "./index.css";
 
 if ("serviceWorker" in navigator) {

@@ -1,4 +1,4 @@
-const { charger } = require("./_lib/gtfs-statique.js");
+const { chargerBase, chargerReseau } = require("./_lib/gtfs-statique.js");
 
 // Données quasi-statiques (changent seulement quand Citibus republie ses
 // horaires, en général par trimestre) : le tracé complet de chaque ligne et
@@ -6,7 +6,8 @@ const { charger } = require("./_lib/gtfs-statique.js");
 // ni renvoyer ces données à chaque rafraîchissement de 15 secondes.
 exports.handler = async function () {
   try {
-    const { lignes, tracesParLigne, arretsParLigne } = await charger();
+    const { lignes, directionsParLigne, arretsPosition } = await chargerBase();
+    const { tracesParLigne, arretsParLigne, arretsParLigneDirection } = await chargerReseau();
 
     return {
       statusCode: 200,
@@ -20,6 +21,9 @@ exports.handler = async function () {
         lignes: lignes,
         traces: tracesParLigne,
         arrets: arretsParLigne,
+        arrets_infos: arretsPosition,
+        directions: directionsParLigne,
+        arrets_par_direction: arretsParLigneDirection,
       }),
     };
   } catch (e) {

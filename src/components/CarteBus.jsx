@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import L from "leaflet";
-import { formaterRetard } from "../utils.js";
+import { formaterRetard, prochainsPassages } from "../utils.js";
 
 // Icône de bus : pastille colorée, numéro de ligne, flèche de cap si connue.
 // - direction : "0"/"1" → bordure pleine ou pointillée, pour distinguer les sens
@@ -32,6 +32,22 @@ function creerIconeBus(couleur, texte, cap, direction, etat) {
   });
 }
 
+// Signature de l'icône : tant qu'elle ne change pas, on ne touche pas au DOM du
+// marqueur — sinon l'élément est recréé à chaque poll et l'animation de
+// déplacement repart de zéro.
+function cleIcone(bus, info, etat) {
+  return [info.couleur, info.nom, bus.cap, bus.direction, etat].join("|");
+}
+
+function appliquerIcone(entree, etat) {
+  const cle = cleIcone(entree.bus, entree.info, etat);
+  if (entree.cleIcone === cle) return;
+  entree.cleIcone = cle;
+  entree.marker.setIcon(
+    creerIconeBus(entree.info.couleur, entree.info.nom, entree.bus.cap, entree.bus.direction, etat)
+  );
+}
+
 function construirePopup(bus, info) {
   const texteArret = bus.prochain_arret
     ? `Prochain arrêt : ${bus.prochain_arret}`
@@ -54,16 +70,7 @@ function construirePopup(bus, info) {
 // à partir des données de bus les plus récentes (calculé à l'ouverture du popup,
 // pas au moment où le marqueur a été créé, pour rester à jour).
 function construireContenuArret(nomArret, stopId, vehicules, lignesInfo) {
-  const passages = [];
-  (vehicules || []).forEach((v) => {
-    (v.prochains_arrets || []).forEach((a) => {
-      if (a.stop_id !== stopId || !a.arrivee) return;
-      const etaMinutes = (a.arrivee * 1000 - Date.now()) / 60000;
-      if (etaMinutes < -1) return;
-      passages.push({ v, a, eta: Math.max(0, Math.round(etaMinutes)) });
-    });
-  });
-  passages.sort((x, y) => x.eta - y.eta);
+  const passages = prochainsPassages(stopId, vehicules);
 
   if (passages.length === 0) {
     return `<div class="popup-bus"><b>${nomArret}</b><div style="margin-top:6px;color:#5B6B72;">Aucun bus prévu pour le moment</div></div>`;
@@ -71,15 +78,15 @@ function construireContenuArret(nomArret, stopId, vehicules, lignesInfo) {
 
   const lignesHtml = passages
     .slice(0, 5)
-    .map(({ v, a, eta }) => {
-      const info = lignesInfo[v.ligne] || { nom: v.ligne, couleur: "#0F2E3D" };
-      const dest = v.destination ? ` → ${v.destination}` : "";
+    .map((p) => {
+      const info = lignesInfo[p.ligne] || { nom: p.ligne, couleur: "#0F2E3D" };
+      const dest = p.destination ? ` → ${p.destination}` : "";
       const retard =
-        a.retard !== null && a.retard !== undefined ? ` · ${formaterRetard(a.retard)}` : "";
+        p.retard !== null && p.retard !== undefined ? ` · ${formaterRetard(p.retard)}` : "";
       return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
         <span style="background:${info.couleur};color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;">${info.nom}</span>
         <span style="flex:1;font-size:12.5px;">${dest}${retard}</span>
-        <span style="font-weight:700;font-size:13px;">${eta} min</span>
+        <span style="font-weight:700;font-size:13px;">${p.eta} min</span>
       </div>`;
     })
     .join("");
@@ -94,6 +101,7 @@ export default function CarteBus({
   direction,
   traces,
   arretsParLigne,
+  arretsInfos,
   mapApiRef,
 }) {
   const conteneurRef = useRef(null);
@@ -105,9 +113,10 @@ export default function CarteBus({
   const vehiculesRef = useRef(vehicules);
   const lignesInfoRef = useRef(lignesInfo);
   // Marqueurs de bus actuellement sur la carte, indexés par id de véhicule.
-  // Permet de mettre à jour leur icône (surbrillance/atténuation) à la sélection
-  // SANS passer par couche.clearLayers(), qui détruirait le marqueur cliqué et
-  // fermerait son popup avant même que l'utilisateur ait pu le voir.
+  // C'est la pièce maîtresse du rafraîchissement : on déplace et on met à jour
+  // ces marqueurs plutôt que de vider la couche, car un clearLayers() détruirait
+  // le marqueur cliqué et refermerait son popup — à la sélection comme à chaque
+  // relevé de 15 s.
   const marqueursRef = useRef(new Map());
 
   // Bus actuellement isolé par l'utilisateur (tap-to-focus), pour le distinguer
@@ -138,6 +147,15 @@ export default function CarteBus({
     couchesReseauRef.current = L.layerGroup().addTo(carte);
     couchesBusRef.current = L.layerGroup().addTo(carte);
     carteRef.current = carte;
+
+    // Déplacement fluide des bus d'un relevé à l'autre (cf. .bus-fluide dans
+    // index.css). On retire la transition pendant les zooms : Leaflet y
+    // recalcule toutes les positions d'un coup, et les animer donnerait
+    // l'impression que les bus glissent à travers la carte.
+    const conteneur = conteneurRef.current;
+    conteneur.classList.add("bus-fluide");
+    carte.on("zoomstart", () => conteneur.classList.remove("bus-fluide"));
+    carte.on("zoomend", () => conteneur.classList.add("bus-fluide"));
 
     // Un tap sur la carte (pas sur un marqueur, Leaflet ne propage pas ces
     // clics-là) désélectionne le bus actuellement isolé.
@@ -173,39 +191,67 @@ export default function CarteBus({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Redessine les marqueurs de bus à chaque nouvelle donnée / changement de filtre.
-  // Ne dépend PAS de busSelectionneId : la sélection est gérée par l'effet suivant,
-  // qui met juste à jour l'icône des marqueurs existants sans les recréer, pour
-  // ne pas fermer le popup qu'on vient d'ouvrir en cliquant sur un bus.
+  // Met à jour les marqueurs de bus à chaque nouvelle donnée / changement de filtre.
+  // On déplace les marqueurs existants au lieu de vider la couche : un
+  // clearLayers() détruisait le marqueur cliqué et refermait donc son popup
+  // toutes les 15 secondes, en pleine lecture.
   useEffect(() => {
     const couche = couchesBusRef.current;
     if (!couche) return;
-    couche.clearLayers();
-    marqueursRef.current.clear();
 
     const selectionActuelle = busSelectionneIdRef.current;
     const bounds = [];
+    const vus = new Set();
+
     vehicules.forEach((bus) => {
       if (!lignesActives.has(String(bus.ligne))) return;
       if (direction !== "tous" && String(bus.direction) !== direction) return;
       const info = lignesInfo[bus.ligne];
       if (!info) return;
+      // Un véhicule peut apparaître dans le flux sans position exploitable :
+      // sans ce garde-fou, Leaflet reçoit des coordonnées NaN et lève une erreur.
+      if (!Number.isFinite(bus.lat) || !Number.isFinite(bus.lon)) return;
+
+      vus.add(bus.id);
+      bounds.push([bus.lat, bus.lon]);
 
       let etat = "normal";
       if (selectionActuelle) {
         etat = bus.id === selectionActuelle ? "selectionne" : "attenue";
       }
 
-      const icone = creerIconeBus(info.couleur, info.nom, bus.cap, bus.direction, etat);
-      const marker = L.marker([bus.lat, bus.lon], { icon: icone }).bindPopup(
-        construirePopup(bus, info)
-      );
+      const existant = marqueursRef.current.get(bus.id);
+      if (existant) {
+        existant.bus = bus;
+        existant.info = info;
+        existant.marker.setLatLng([bus.lat, bus.lon]);
+        appliquerIcone(existant, etat);
+        // Rafraîchit aussi le contenu : un popup resté ouvert affiche désormais
+        // le prochain arrêt et le retard à jour, sans se refermer.
+        existant.marker.setPopupContent(construirePopup(bus, info));
+        return;
+      }
+
+      const marker = L.marker([bus.lat, bus.lon], {
+        icon: creerIconeBus(info.couleur, info.nom, bus.cap, bus.direction, etat),
+      }).bindPopup(construirePopup(bus, info));
       marker.on("click", () => {
         setBusSelectionneId((precedent) => (precedent === bus.id ? null : bus.id));
       });
       couche.addLayer(marker);
-      marqueursRef.current.set(bus.id, { marker, bus, info });
-      bounds.push([bus.lat, bus.lon]);
+      marqueursRef.current.set(bus.id, {
+        marker,
+        bus,
+        info,
+        cleIcone: cleIcone(bus, info, etat),
+      });
+    });
+
+    // Bus disparus du flux ou masqués par les filtres
+    marqueursRef.current.forEach((entree, id) => {
+      if (vus.has(id)) return;
+      couche.removeLayer(entree.marker);
+      marqueursRef.current.delete(id);
     });
 
     if (premierChargementRef.current && bounds.length > 0) {
@@ -218,12 +264,12 @@ export default function CarteBus({
   // (clic sur un bus / désélection), sans toucher à la couche ni aux popups :
   // c'est ce qui permet au popup du bus cliqué de rester ouvert.
   useEffect(() => {
-    marqueursRef.current.forEach(({ marker, bus, info }) => {
+    marqueursRef.current.forEach((entree) => {
       let etat = "normal";
       if (busSelectionneId) {
-        etat = bus.id === busSelectionneId ? "selectionne" : "attenue";
+        etat = entree.bus.id === busSelectionneId ? "selectionne" : "attenue";
       }
-      marker.setIcon(creerIconeBus(info.couleur, info.nom, bus.cap, bus.direction, etat));
+      appliquerIcone(entree, etat);
     });
   }, [busSelectionneId]);
 
@@ -233,7 +279,7 @@ export default function CarteBus({
   // que le même bus reste sélectionné, donc pas de redessin inutile).
   useEffect(() => {
     const couche = couchesReseauRef.current;
-    if (!couche || !traces || !arretsParLigne) return;
+    if (!couche || !traces || !arretsParLigne || !arretsInfos) return;
     couche.clearLayers();
 
     const arretsDejaAffiches = new Set();
@@ -258,10 +304,13 @@ export default function CarteBus({
         });
       });
 
-      // Arrêts de la ligne (petits points cliquables)
-      (arretsParLigne[routeId] || []).forEach((arret) => {
-        if (arretsDejaAffiches.has(arret.stop_id)) return; // évite les doublons si desservi par plusieurs lignes actives
-        arretsDejaAffiches.add(arret.stop_id);
+      // Arrêts de la ligne (petits points cliquables). Le serveur n'envoie que
+      // des identifiants : nom et coordonnées viennent du dictionnaire commun.
+      (arretsParLigne[routeId] || []).forEach((stopId) => {
+        const arret = arretsInfos[stopId];
+        if (!arret) return;
+        if (arretsDejaAffiches.has(stopId)) return; // évite les doublons si desservi par plusieurs lignes actives
+        arretsDejaAffiches.add(stopId);
 
         const point = L.circleMarker([arret.lat, arret.lon], {
           radius: 5,
@@ -276,12 +325,12 @@ export default function CarteBus({
           point
             .getPopup()
             .setContent(
-              construireContenuArret(arret.nom, arret.stop_id, vehiculesRef.current, lignesInfoRef.current)
+              construireContenuArret(arret.nom, stopId, vehiculesRef.current, lignesInfoRef.current)
             );
         });
       });
     });
-  }, [traces, arretsParLigne, lignesInfo, lignesActives, ligneSelectionnee]);
+  }, [traces, arretsParLigne, arretsInfos, lignesInfo, lignesActives, ligneSelectionnee]);
 
   return <div ref={conteneurRef} className="fixed inset-0" />;
 }

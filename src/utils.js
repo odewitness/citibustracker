@@ -86,3 +86,56 @@ export function trierParNom(routeIds, lignesInfo) {
     })
   );
 }
+
+// --- Recherche et distances (panneau des arrêts) ---
+
+// Comparaison tolérante aux accents et à la casse : « gare » doit trouver
+// « Gare SNCF », « eglise » doit trouver « Église ».
+export function normaliserTexte(s) {
+  return (s || "")
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+// Distance à vol d'oiseau en mètres (formule de haversine). Largement suffisant
+// pour classer des arrêts par proximité.
+export function distanceMetres(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+export function formaterDistance(metres) {
+  if (metres === null || metres === undefined) return "";
+  if (metres < 1000) return `${Math.round(metres / 10) * 10} m`;
+  return `${(metres / 1000).toFixed(1).replace(".", ",")} km`;
+}
+
+// Prochains passages à un arrêt, reconstitués depuis les bus en circulation.
+// Utilisé à la fois par le popup de la carte et par le panneau des arrêts.
+export function prochainsPassages(stopId, vehicules) {
+  const passages = [];
+  (vehicules || []).forEach((v) => {
+    (v.prochains_arrets || []).forEach((a) => {
+      if (a.stop_id !== stopId || !a.arrivee) return;
+      const etaMinutes = (a.arrivee * 1000 - Date.now()) / 60000;
+      if (etaMinutes < -1) return;
+      passages.push({
+        ligne: v.ligne,
+        destination: v.destination,
+        retard: a.retard,
+        horairePrevu: a.horaire_prevu,
+        eta: Math.max(0, Math.round(etaMinutes)),
+      });
+    });
+  });
+  return passages.sort((x, y) => x.eta - y.eta);
+}

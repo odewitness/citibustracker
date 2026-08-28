@@ -1,12 +1,14 @@
 const protobuf = require("gtfs-realtime-bindings");
-const { charger } = require("./_lib/gtfs-statique.js");
+const { chargerBase } = require("./_lib/gtfs-statique.js");
 
 // Flux temps réel (positions des bus + horaires)
 const FEED_URL = "https://feed-citibus-narbonne.ratpdev.com/GTFS-RT/gtfs-rt.bin";
 
 exports.handler = async function () {
   try {
-    const { arrets, lignes, destinationsParTrip } = await charger();
+    // Socle seulement : cette fonction est appelée toutes les 15 s, elle n'a
+    // aucun besoin des tracés ni de la desserte complète.
+    const { arrets, lignes, destinationsParTrip } = await chargerBase();
 
     const resp = await fetch(FEED_URL);
     if (!resp.ok) {

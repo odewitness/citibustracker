@@ -1,0 +1,22 @@
+name: CI
+
+# Le site est déployé depuis main : ce garde-fou vérifie que ce qui y arrive
+# compile, passe le lint et les tests avant que Netlify ne le mette en ligne.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

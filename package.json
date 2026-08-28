@@ -6,19 +6,28 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "test": "vitest run"
   },
   "dependencies": {
+    "@netlify/blobs": "^11.0.2",
+    "adm-zip": "^0.6.0",
+    "gtfs-realtime-bindings": "^2.2.0",
+    "leaflet": "^1.9.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "leaflet": "^1.9.4",
-    "gtfs-realtime-bindings": "^2.2.0",
-    "adm-zip": "^0.6.0"
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "vite": "^8.2.0",
+    "@eslint/js": "^10.0.1",
+    "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.0.5",
+    "eslint": "^10.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.11.0",
     "tailwindcss": "^4.3.3",
-    "@tailwindcss/vite": "^4.3.3"
+    "vite": "^8.2.0",
+    "vitest": "^4.1.11"
   }
 }

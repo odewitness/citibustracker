@@ -48,3 +48,8 @@ body {
 /* Masquer la barre de défilement des lignes tout en gardant le scroll tactile */
 .scrollbar-hidden { scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .scrollbar-hidden::-webkit-scrollbar { display: none; }
+
+/* Les positions ne sont relevées que toutes les 15 s : sans transition, les bus
+   sautent d'un point à l'autre. Classe posée sur le conteneur de la carte et
+   retirée pendant les zooms (voir CarteBus.jsx). */
+.bus-fluide .leaflet-marker-icon { transition: transform 1.2s ease-out; }
