@@ -64,3 +64,25 @@ export function jouerSon() {
     /* Web Audio indisponible, tant pis */
   }
 }
+
+// --- Regroupement des lignes en deux onglets ---
+// "principales" = les lignes du réseau urbain listées ci-dessus,
+// "autres"      = tout le reste du GTFS (scolaires, renforts, etc.).
+export const GROUPE_PRINCIPALES = "principales";
+export const GROUPE_AUTRES = "autres";
+
+export function estLignePrincipale(nomOuInfo) {
+  const nom = typeof nomOuInfo === "object" && nomOuInfo !== null ? nomOuInfo.nom : nomOuInfo;
+  return LIGNES_AUTORISEES_NORM.includes(normaliser(nom));
+}
+
+// Tri « naturel » pour les autres lignes, dont les noms sont hétérogènes
+// ("10", "S3", "TAD"…) : 2 doit venir avant 10, pas après.
+export function trierParNom(routeIds, lignesInfo) {
+  return [...routeIds].sort((a, b) =>
+    (lignesInfo[a]?.nom || a).localeCompare(lignesInfo[b]?.nom || b, "fr", {
+      numeric: true,
+      sensitivity: "base",
+    })
+  );
+}

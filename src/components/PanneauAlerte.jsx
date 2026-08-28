@@ -1,9 +1,8 @@
-import { trierParOrdreAutorise } from "../utils.js";
-
 export default function PanneauAlerte({
   ouvert,
   onFermer,
   lignesInfo,
+  ids = [],
   ligneChoisie,
   onChangerLigne,
   directionsDisponibles = [],
@@ -17,7 +16,6 @@ export default function PanneauAlerte({
   onActiver,
 }) {
   if (!ouvert) return null;
-  const ids = trierParOrdreAutorise(Object.keys(lignesInfo), lignesInfo);
 
   return (
     <div className="fixed left-3 right-3 bottom-[78px] z-[1090] flex justify-center">

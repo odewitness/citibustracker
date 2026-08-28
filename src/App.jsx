@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CarteBus from "./components/CarteBus.jsx";
 import IleStatut from "./components/IleStatut.jsx";
 import PanneauAlerte from "./components/PanneauAlerte.jsx";
 import {
-  LIGNES_AUTORISEES_NORM,
-  normaliser,
+  GROUPE_PRINCIPALES,
+  GROUPE_AUTRES,
+  estLignePrincipale,
+  trierParOrdreAutorise,
+  trierParNom,
   lireStockage,
   ecrireStockage,
   jouerSon,
@@ -23,6 +26,14 @@ export default function App() {
   const [lignesInfo, setLignesInfo] = useState({});
   const [lignesActives, setLignesActives] = useState(
     new Set(preferencesInitiales?.lignesActives || [])
+  );
+  // Onglet courant : lignes du réseau urbain (1-4 + Citadines) ou toutes les autres.
+  const [groupe, setGroupe] = useState(preferencesInitiales?.groupe || GROUPE_PRINCIPALES);
+  // Pour l'onglet « autres », on mémorise les lignes MASQUÉES plutôt que les
+  // lignes actives : la liste varie au fil de la journée (bus scolaires, renforts),
+  // et une ligne qui apparaît doit être visible par défaut.
+  const [autresMasquees, setAutresMasquees] = useState(
+    new Set(preferencesInitiales?.autresMasquees || [])
   );
   const [direction, setDirection] = useState(preferencesInitiales?.direction || "tous");
   const [erreur, setErreur] = useState(null);
@@ -78,15 +89,17 @@ export default function App() {
         setDonnees(data);
 
         if (!lignesInitialiseesRef.current && data.lignes) {
-          const filtre = {};
-          Object.keys(data.lignes).forEach((routeId) => {
-            if (LIGNES_AUTORISEES_NORM.includes(normaliser(data.lignes[routeId].nom))) {
-              filtre[routeId] = data.lignes[routeId];
-            }
-          });
-          setLignesInfo(filtre);
+          // On conserve TOUTES les lignes du réseau : le filtrage se fait
+          // désormais par onglet, pas à la source.
+          setLignesInfo(data.lignes);
           if (!preferencesInitiales) {
-            setLignesActives(new Set(Object.keys(filtre)));
+            setLignesActives(
+              new Set(
+                Object.keys(data.lignes).filter((routeId) =>
+                  estLignePrincipale(data.lignes[routeId])
+                )
+              )
+            );
           }
           lignesInitialiseesRef.current = true;
         }
@@ -117,16 +130,77 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    ecrireStockage(CLE_PREFERENCES, { lignesActives: Array.from(lignesActives), direction });
-  }, [lignesActives, direction]);
+    ecrireStockage(CLE_PREFERENCES, {
+      lignesActives: Array.from(lignesActives),
+      autresMasquees: Array.from(autresMasquees),
+      groupe,
+      direction,
+    });
+  }, [lignesActives, autresMasquees, groupe, direction]);
+
+  // --- Répartition des lignes entre les deux onglets ---
+  const idsPrincipales = useMemo(
+    () => trierParOrdreAutorise(
+      Object.keys(lignesInfo).filter((id) => estLignePrincipale(lignesInfo[id])),
+      lignesInfo
+    ),
+    [lignesInfo]
+  );
+
+  // Onglet « autres bus » : toutes les lignes hors réseau urbain qui ont au moins
+  // un véhicule dans le flux temps réel — inutile de lister les centaines de
+  // lignes scolaires du GTFS qui ne circulent pas à cette heure-ci.
+  const idsAutres = useMemo(() => {
+    const enCirculation = new Set(donnees.vehicules.map((v) => String(v.ligne)));
+    return trierParNom(
+      Object.keys(lignesInfo).filter(
+        (id) => !estLignePrincipale(lignesInfo[id]) && enCirculation.has(id)
+      ),
+      lignesInfo
+    );
+  }, [lignesInfo, donnees.vehicules]);
+
+  const idsCourants = groupe === GROUPE_AUTRES ? idsAutres : idsPrincipales;
+
+  // Le panneau d'alerte, lui, propose toutes les lignes des deux onglets.
+  const idsAlerte = useMemo(() => [...idsPrincipales, ...idsAutres], [idsPrincipales, idsAutres]);
+
+  // Lignes réellement affichées sur la carte : celles de l'onglet courant qui
+  // ne sont pas désactivées.
+  const lignesActivesCourantes = useMemo(
+    () =>
+      groupe === GROUPE_AUTRES
+        ? new Set(idsAutres.filter((id) => !autresMasquees.has(id)))
+        : lignesActives,
+    [groupe, idsAutres, autresMasquees, lignesActives]
+  );
 
   function basculerLigne(routeId) {
+    if (groupe === GROUPE_AUTRES) {
+      setAutresMasquees((prec) => {
+        const suivant = new Set(prec);
+        if (suivant.has(routeId)) suivant.delete(routeId);
+        else suivant.add(routeId);
+        return suivant;
+      });
+      return;
+    }
     setLignesActives((prec) => {
       const suivant = new Set(prec);
       if (suivant.has(routeId)) suivant.delete(routeId);
       else suivant.add(routeId);
       return suivant;
     });
+  }
+
+  function toutAfficher() {
+    if (groupe === GROUPE_AUTRES) setAutresMasquees(new Set());
+    else setLignesActives(new Set(idsPrincipales));
+  }
+
+  function toutMasquer() {
+    if (groupe === GROUPE_AUTRES) setAutresMasquees(new Set(idsAutres));
+    else setLignesActives(new Set());
   }
 
   // --- Recentrage sur ma position ---
@@ -179,7 +253,7 @@ export default function App() {
   // Ouvre le panneau en garantissant toujours une ligne/direction valides
   // (c'est l'absence de cette garantie qui provoquait l'affichage "Ligne undefined")
   function ouvrirPanneauAlerte() {
-    const idsDisponibles = Object.keys(lignesInfo);
+    const idsDisponibles = idsAlerte;
     let ligne = alerte?.routeId || ligneFormAlerte;
     if (!ligne || !lignesInfo[ligne]) ligne = idsDisponibles[0] || "";
 
@@ -298,7 +372,7 @@ export default function App() {
 
   const nbVisibles = donnees.vehicules.filter(
     (b) =>
-      lignesActives.has(String(b.ligne)) &&
+      lignesActivesCourantes.has(String(b.ligne)) &&
       (direction === "tous" || String(b.direction) === direction) &&
       lignesInfo[b.ligne]
   ).length;
@@ -312,7 +386,7 @@ export default function App() {
       <CarteBus
         vehicules={donnees.vehicules}
         lignesInfo={lignesInfo}
-        lignesActives={lignesActives}
+        lignesActives={lignesActivesCourantes}
         direction={direction}
         traces={reseau.traces}
         arretsParLigne={reseau.arrets}
@@ -322,8 +396,13 @@ export default function App() {
       <IleStatut
         statutTexte={statutTexte}
         lignesInfo={lignesInfo}
-        lignesActives={lignesActives}
+        ids={idsCourants}
+        lignesActives={lignesActivesCourantes}
         onBasculerLigne={basculerLigne}
+        groupe={groupe}
+        onChangerGroupe={setGroupe}
+        onToutAfficher={toutAfficher}
+        onToutMasquer={toutMasquer}
         direction={direction}
         onChangerDirection={setDirection}
       />
@@ -410,6 +489,7 @@ export default function App() {
         ouvert={panneauOuvert}
         onFermer={() => setPanneauOuvert(false)}
         lignesInfo={lignesInfo}
+        ids={idsAlerte}
         ligneChoisie={ligneFormAlerte}
         onChangerLigne={(id) => {
           setLigneFormAlerte(id);
