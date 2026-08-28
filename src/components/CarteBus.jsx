@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import L from "leaflet";
 import {
   agePosition,
   busFantome,
   categorieRetard,
+  COULEUR_OCCUPATION,
   COULEUR_RETARD,
+  etatPosition,
   formaterAge,
   formaterRetard,
+  LIBELLE_OCCUPATION,
   prochainsPassages,
 } from "../utils.js";
 
@@ -92,16 +95,42 @@ function construirePopup(bus, info) {
     const cls = bus.retard > 60 ? "retard-neg" : bus.retard < -60 ? "retard-pos" : "";
     texteRetard = `<div class="${cls}">${formaterRetard(bus.retard)}</div>`;
   }
-  // Bus dont la position n'a pas été rafraîchie depuis plusieurs minutes :
-  // on le signale explicitement pour ne pas faire attendre à un arrêt.
+
+  // Affluence à bord, quand le flux la renseigne.
+  const occ = bus.occupation;
+  const texteOccupation =
+    occ && occ.niveau
+      ? `<div style="color:${COULEUR_OCCUPATION[occ.niveau]};font-weight:600;">${
+          LIBELLE_OCCUPATION[occ.niveau]
+        }${occ.pct !== null && occ.pct !== undefined ? ` · ${occ.pct} %` : ""}</div>`
+      : "";
+
+  // Accessibilité UFR de la course.
+  const textePmr =
+    bus.pmr === true
+      ? `<div>♿ Course accessible</div>`
+      : bus.pmr === false
+        ? `<div style="color:#5B6B72;">Course non accessible UFR</div>`
+        : "";
+
+  // Fraîcheur de la position : on distingue « un peu ancienne » de « signal
+  // perdu » et de « hors service » (course terminée / au dépôt).
   const age = agePosition(bus);
-  const texteFantome = busFantome(bus)
-    ? `<div class="fantome">⚠ Position figée depuis ${formaterAge(age)}</div>`
-    : "";
+  const etat = etatPosition(bus);
+  const texteEtat =
+    etat === "ancienne"
+      ? `<div style="color:#5B6B72;">Position vieille de ${formaterAge(age)}</div>`
+      : etat === "signal-perdu"
+        ? `<div class="fantome">⚠ Signal perdu depuis ${formaterAge(age)}</div>`
+        : etat === "hors-service"
+          ? `<div class="fantome">⚠ Hors service (position figée)</div>`
+          : "";
+
   return `<div class="popup-bus"><b>Ligne ${info.nom} — Bus ${bus.label}</b>
     ${texteDestination}
     <div>Vitesse : ${bus.vitesse} km/h</div>
-    <div>${texteArret}</div>${texteRetard}${texteFantome}</div>`;
+    <div>${texteArret}</div>${texteRetard}${texteOccupation}${textePmr}${texteEtat}
+    <div style="margin-top:5px;color:#123A4C;font-weight:600;">Toucher le bus : trajet complet ▸</div></div>`;
 }
 
 // Construit le contenu du "tableau des prochains passages" pour un arrêt donné,
@@ -141,6 +170,8 @@ export default function CarteBus({
   arretsParLigne,
   arretsInfos,
   mapApiRef,
+  busSelectionneId = null,
+  onChangerBusSelectionne,
 }) {
   const conteneurRef = useRef(null);
   const carteRef = useRef(null);
@@ -158,9 +189,15 @@ export default function CarteBus({
   const marqueursRef = useRef(new Map());
 
   // Bus actuellement isolé par l'utilisateur (tap-to-focus), pour le distinguer
-  // des autres bus de la même ligne. null = aucune sélection, affichage normal.
-  const [busSelectionneId, setBusSelectionneId] = useState(null);
-  const busSelectionneIdRef = useRef(null);
+  // des autres bus de la même ligne — et alimenter la fiche « trajet complet »
+  // remontée jusqu'à App. La sélection est pilotée par le parent : null = aucune.
+  const busSelectionneIdRef = useRef(busSelectionneId);
+  // Référence stable vers le callback du parent : les gestionnaires de clic
+  // Leaflet sont posés une seule fois, ils ne doivent pas capturer une version
+  // périmée de la prop.
+  const onChangerRef = useRef(onChangerBusSelectionne);
+  useEffect(() => { onChangerRef.current = onChangerBusSelectionne; }, [onChangerBusSelectionne]);
+  const selectionner = useCallback((valeur) => onChangerRef.current?.(valeur), []);
 
   useEffect(() => { vehiculesRef.current = vehicules; }, [vehicules]);
   useEffect(() => { lignesInfoRef.current = lignesInfo; }, [lignesInfo]);
@@ -197,7 +234,7 @@ export default function CarteBus({
 
     // Un tap sur la carte (pas sur un marqueur, Leaflet ne propage pas ces
     // clics-là) désélectionne le bus actuellement isolé.
-    carte.on("click", () => setBusSelectionneId(null));
+    carte.on("click", () => selectionner(null));
 
     // On expose quelques méthodes utiles au composant parent (recentrage, suivi)
     if (mapApiRef) {
@@ -282,7 +319,7 @@ export default function CarteBus({
         ),
       }).bindPopup(construirePopup(bus, info));
       marker.on("click", () => {
-        setBusSelectionneId((precedent) => (precedent === bus.id ? null : bus.id));
+        selectionner(busSelectionneIdRef.current === bus.id ? null : bus.id);
       });
       couche.addLayer(marker);
       marqueursRef.current.set(bus.id, {
@@ -304,7 +341,7 @@ export default function CarteBus({
       carteRef.current.fitBounds(bounds, { maxZoom: 15, padding: [40, 100] });
       premierChargementRef.current = false;
     }
-  }, [vehicules, lignesInfo, lignesActives, direction]);
+  }, [vehicules, lignesInfo, lignesActives, direction, selectionner]);
 
   // Met à jour l'icône des marqueurs déjà présents quand la sélection change
   // (clic sur un bus / désélection), sans toucher à la couche ni aux popups :

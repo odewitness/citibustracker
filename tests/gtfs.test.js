@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCsv } from "../netlify/functions/_lib/gtfs-statique.js";
+import { interpreterAcces, parseCsv } from "../netlify/functions/_lib/gtfs-statique.js";
 
 describe("parseCsv", () => {
   it("respecte les virgules protégées par des guillemets", () => {
@@ -21,5 +21,17 @@ describe("parseCsv", () => {
 
   it("renvoie une liste vide pour une entrée vide", () => {
     expect(parseCsv("")).toEqual([]);
+  });
+});
+
+describe("interpreterAcces", () => {
+  it("traduit le code GTFS d'accessibilité UFR", () => {
+    expect(interpreterAcces("1")).toBe(true);
+    expect(interpreterAcces("2")).toBe(false);
+  });
+  it("garde « inconnu » (null) distinct de « non accessible »", () => {
+    expect(interpreterAcces("0")).toBeNull();
+    expect(interpreterAcces("")).toBeNull();
+    expect(interpreterAcces(undefined)).toBeNull();
   });
 });

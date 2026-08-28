@@ -119,6 +119,11 @@ export default function PanneauFavoris({
                                 <span className="text-[11.5px] tabular-nums text-[var(--ink-muted)]">
                                   {p.eta} min
                                 </span>
+                                {p.pmr === true && (
+                                  <span title="Accessible UFR" className="text-[11px]">
+                                    ♿
+                                  </span>
+                                )}
                               </span>
                             );
                           })

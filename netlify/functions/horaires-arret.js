@@ -65,6 +65,24 @@ function formaterHM(secondeDuJour) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+// Dernier passage de la journée d'exploitation pour chaque ligne+sens desservant
+// l'arrêt : le plus tardif parmi les services actifs (les courses après minuit,
+// heure ≥ 24:00:00, comptent comme les plus tardives). Renvoie un Set de clés
+// "routeId|directionId|sec" — celles à signaler d'un « dernier bus ».
+function derniersPassages(passagesArret, servicesAujourdhui, servicesVeille) {
+  const maxParCle = new Map(); // "routeId|directionId" -> sec le plus tardif
+  for (const p of passagesArret) {
+    const actif =
+      p.sec >= 86400 ? servicesVeille.has(p.serviceId) : servicesAujourdhui.has(p.serviceId);
+    if (!actif) continue;
+    const cle = p.routeId + "|" + p.directionId;
+    if (!maxParCle.has(cle) || p.sec > maxParCle.get(cle)) maxParCle.set(cle, p.sec);
+  }
+  const derniers = new Set();
+  for (const [cle, sec] of maxParCle) derniers.add(cle + "|" + sec);
+  return derniers;
+}
+
 exports.handler = async function (event) {
   try {
     const stopId = event.queryStringParameters && event.queryStringParameters.arret;
@@ -74,7 +92,7 @@ exports.handler = async function (event) {
       Number(event.queryStringParameters && event.queryStringParameters.fenetre) || FENETRE_DEFAUT;
     const fenetreSec = Math.min(Math.max(fenetreMin, 15), 24 * 60) * 60;
 
-    const { arrets, lignes } = await chargerBase();
+    const { arrets, lignes, arretsPosition } = await chargerBase();
     const horaires = await chargerHoraires();
     const passagesArret = horaires.horairesParArret[stopId] || [];
 
@@ -84,6 +102,7 @@ exports.handler = async function (event) {
     // portent une heure ≥ 24:00:00.
     const veille = dateDecalee(dateYYYYMMDD, -1);
     const servicesVeille = servicesActifs(horaires, veille.date, veille.jour);
+    const derniers = derniersPassages(passagesArret, servicesAujourdhui, servicesVeille);
 
     const resultats = [];
     for (const p of passagesArret) {
@@ -107,6 +126,8 @@ exports.handler = async function (event) {
         heure: formaterHM(p.sec),
         heure_sec: p.sec % 86400,
         dans: Math.round(delta / 60),
+        dernier: derniers.has(p.routeId + "|" + p.directionId + "|" + p.sec),
+        pmr: p.pmr ?? null,
       });
     }
     resultats.sort((a, b) => a.dans - b.dans);
@@ -116,6 +137,7 @@ exports.handler = async function (event) {
       {
         stop_id: stopId,
         arret: arrets[stopId] || stopId,
+        pmr_arret: (arretsPosition[stopId] || {}).pmr ?? null,
         date: dateYYYYMMDD,
         passages: resultats.slice(0, NB_MAX),
       },
@@ -125,3 +147,6 @@ exports.handler = async function (event) {
     return reponse(500, { erreur: String(e && e.message ? e.message : e) });
   }
 };
+
+// Exposé pour les tests unitaires.
+exports.derniersPassages = derniersPassages;

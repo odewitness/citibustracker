@@ -6,11 +6,14 @@ import {
   construireLien,
   distanceMetres,
   estLignePrincipale,
+  etatPosition,
   formaterDistance,
   formaterRetard,
+  formaterTempsMarche,
   lireParametresUrl,
   normaliserTexte,
   prochainsPassages,
+  tempsMarcheMinutes,
   trierParNom,
 } from "../src/utils.js";
 
@@ -144,5 +147,58 @@ describe("prochainsPassages", () => {
 
   it("tolère un véhicule sans liste d'arrêts", () => {
     expect(prochainsPassages("_1", [{ ligne: "1" }])).toEqual([]);
+  });
+
+  it("propage l'accessibilité et l'affluence du véhicule", () => {
+    const passages = prochainsPassages("_1", [
+      {
+        ligne: "1",
+        pmr: true,
+        occupation: { niveau: "moyen", pct: 55 },
+        prochains_arrets: [{ stop_id: "_1", arrivee: Math.round((Date.now() + 120000) / 1000) }],
+      },
+    ]);
+    expect(passages[0].pmr).toBe(true);
+    expect(passages[0].occupation).toEqual({ niveau: "moyen", pct: 55 });
+  });
+});
+
+describe("tempsMarcheMinutes", () => {
+  it("estime la marche à ~4,5 km/h et arrondit à la minute", () => {
+    expect(tempsMarcheMinutes(375)).toBe(5); // 375 m / 75 m·min⁻¹
+    expect(tempsMarcheMinutes(1500)).toBe(20);
+  });
+  it("ne descend jamais sous une minute", () => {
+    expect(tempsMarcheMinutes(0)).toBe(1);
+    expect(tempsMarcheMinutes(10)).toBe(1);
+  });
+  it("renvoie null pour une distance inconnue", () => {
+    expect(tempsMarcheMinutes(null)).toBeNull();
+    expect(tempsMarcheMinutes(undefined)).toBeNull();
+  });
+});
+
+describe("formaterTempsMarche", () => {
+  it("formate en « N min à pied », vide si inconnu", () => {
+    expect(formaterTempsMarche(375)).toBe("5 min à pied");
+    expect(formaterTempsMarche(null)).toBe("");
+  });
+});
+
+describe("etatPosition", () => {
+  const ageDe = (secondes) => ({ horodatage: Math.floor(Date.now() / 1000) - secondes });
+
+  it("considère une position récente comme « ok »", () => {
+    expect(etatPosition(ageDe(20))).toBe("ok");
+    expect(etatPosition({})).toBe("ok");
+  });
+  it("signale une position un peu ancienne sans crier au fantôme", () => {
+    expect(etatPosition(ageDe(90))).toBe("ancienne");
+  });
+  it("distingue signal perdu (arrêts à venir) et hors service (course finie)", () => {
+    expect(etatPosition({ ...ageDe(300), prochains_arrets: [{ stop_id: "_1" }] })).toBe(
+      "signal-perdu"
+    );
+    expect(etatPosition({ ...ageDe(300), prochains_arrets: [] })).toBe("hors-service");
   });
 });

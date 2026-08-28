@@ -17,6 +17,16 @@ let cacheBase = null;
 let cacheReseau = null;
 let cacheHoraires = null;
 
+// wheelchair_boarding (stops.txt) / wheelchair_accessible (trips.txt) :
+// 1 = accessible en fauteuil, 2 = non accessible, 0 ou absent = information
+// inconnue. On garde la distinction non-accessible / inconnu : « pas d'info »
+// ne doit pas se lire comme « accessible ».
+function interpreterAcces(valeur) {
+  if (valeur === "1" || valeur === 1) return true;
+  if (valeur === "2" || valeur === 2) return false;
+  return null;
+}
+
 function splitCsvLine(line) {
   const result = [];
   let cur = "";
@@ -93,7 +103,7 @@ async function chargerBase() {
     const lat = parseFloat(row.stop_lat);
     const lon = parseFloat(row.stop_lon);
     if (row.stop_id && !isNaN(lat) && !isNaN(lon)) {
-      arretsPosition[row.stop_id] = { nom, lat, lon };
+      arretsPosition[row.stop_id] = { nom, lat, lon, pmr: interpreterAcces(row.wheelchair_boarding) };
     }
   });
 
@@ -107,6 +117,7 @@ async function chargerBase() {
   // trips.txt associe chaque trip_id à une ligne (route_id), un sens
   // (direction_id), un tracé (shape_id) et une destination (trip_headsign).
   const destinationsParTrip = {};
+  const pmrParTrip = {}; // trip_id -> true | false (accessibilité UFR ; absent si inconnue)
   const tripIdVersCle = {}; // trip_id -> "route_id|direction_id"
   const shapeIdParCle = {}; // "route_id|direction_id" -> Set(shape_id)
   const libellesParCle = {}; // "route_id|direction_id" -> Map(headsign -> nombre)
@@ -114,6 +125,8 @@ async function chargerBase() {
   lireTable(zip, "trips.txt").forEach((row) => {
     if (!row.trip_id) return;
     if (row.trip_headsign) destinationsParTrip[row.trip_id] = row.trip_headsign;
+    const acces = interpreterAcces(row.wheelchair_accessible);
+    if (acces !== null) pmrParTrip[row.trip_id] = acces;
     if (!row.route_id) return;
 
     const dir = row.direction_id || "0";
@@ -157,6 +170,7 @@ async function chargerBase() {
     arretsPosition,
     lignes,
     destinationsParTrip,
+    pmrParTrip,
     directionsParLigne,
     tripIdVersCle,
     shapeIdParCle,
@@ -277,10 +291,11 @@ async function chargerHoraires() {
       directionId: row.direction_id || "0",
       serviceId: row.service_id || "",
       headsign: row.trip_headsign || "",
+      pmr: interpreterAcces(row.wheelchair_accessible),
     };
   });
 
-  const horairesParArret = {}; // stop_id -> [{ sec, routeId, directionId, serviceId, headsign }]
+  const horairesParArret = {}; // stop_id -> [{ sec, routeId, directionId, serviceId, headsign, pmr }]
   lireTable(zip, "stop_times.txt").forEach((row) => {
     if (!row.trip_id || !row.stop_id) return;
     const info = infoTrip[row.trip_id];
@@ -294,6 +309,7 @@ async function chargerHoraires() {
       directionId: info.directionId,
       serviceId: info.serviceId,
       headsign: info.headsign,
+      pmr: info.pmr,
     });
   });
   Object.keys(horairesParArret).forEach((id) =>
@@ -354,4 +370,5 @@ module.exports = {
   servicesActifs,
   versSecondes,
   parseCsv,
+  interpreterAcces,
 };

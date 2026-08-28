@@ -7,7 +7,12 @@ export default function HorairesTheoriques({ stopId, lignesInfo = {} }) {
   // L'état retient l'arrêt auquel il correspond : tant qu'il ne coïncide pas
   // avec stopId, on affiche « chargement » sans avoir à réinitialiser dans
   // le corps de l'effet.
-  const [etat, setEtat] = useState({ stopId: null, statut: "chargement", passages: [] });
+  const [etat, setEtat] = useState({
+    stopId: null,
+    statut: "chargement",
+    passages: [],
+    pmrArret: null,
+  });
 
   useEffect(() => {
     let annule = false;
@@ -19,10 +24,11 @@ export default function HorairesTheoriques({ stopId, lignesInfo = {} }) {
           stopId,
           statut: d.erreur ? "erreur" : "ok",
           passages: d.erreur ? [] : d.passages || [],
+          pmrArret: d.erreur ? null : (d.pmr_arret ?? null),
         });
       })
       .catch(() => {
-        if (!annule) setEtat({ stopId, statut: "erreur", passages: [] });
+        if (!annule) setEtat({ stopId, statut: "erreur", passages: [], pmrArret: null });
       });
     return () => {
       annule = true;
@@ -49,6 +55,9 @@ export default function HorairesTheoriques({ stopId, lignesInfo = {} }) {
 
   return (
     <div className="flex flex-col">
+      {etat.pmrArret === true && (
+        <p className="text-[11px] text-[var(--ink-muted)] py-1">♿ Arrêt accessible UFR</p>
+      )}
       {etat.passages.map((p, i) => {
         const info = lignesInfo[p.routeId] || {
           nom: p.ligne,
@@ -65,7 +74,15 @@ export default function HorairesTheoriques({ stopId, lignesInfo = {} }) {
             >
               {info.nom}
             </span>
-            <span className="flex-1 min-w-0 truncate text-[12.5px]">{p.destination || "—"}</span>
+            <span className="flex-1 min-w-0 truncate text-[12.5px]">
+              {p.destination || "—"}
+              {p.pmr === true && <span title="Course accessible UFR" className="ml-1">♿</span>}
+              {p.dernier && (
+                <span className="ml-1.5 rounded-full bg-[var(--chrome-950)] text-white px-1.5 py-[1px] text-[9.5px] font-bold uppercase tracking-wide align-middle">
+                  Dernier
+                </span>
+              )}
+            </span>
             <span className="shrink-0 tabular-nums text-[12.5px] font-semibold">
               {p.heure}
               {p.dans <= 60 && (

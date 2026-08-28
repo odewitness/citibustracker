@@ -81,6 +81,24 @@ export function busFantome(vehicule, maintenant = Date.now()) {
   return age !== null && age > SEUIL_FANTOME_SECONDES;
 }
 
+// En deçà, une position un peu ancienne (bus à l'arrêt, tunnel) n'a rien
+// d'anormal ; au-delà de SEUIL_FANTOME_SECONDES elle ne bouge vraiment plus.
+export const SEUIL_POSITION_ANCIENNE = 60;
+
+// Diagnostic plus fin qu'un simple booléen « fantôme » :
+// - "ok"           : position fraîche
+// - "ancienne"     : figée depuis 1 à 2,5 min — on l'affiche mais on la nuance
+// - "hors-service" : figée et plus aucun arrêt à venir → course terminée / dépôt
+// - "signal-perdu" : figée alors qu'il reste des arrêts → perte de signal probable
+export function etatPosition(vehicule, maintenant = Date.now()) {
+  const age = agePosition(vehicule, maintenant);
+  if (age === null || age <= SEUIL_POSITION_ANCIENNE) return "ok";
+  if (age <= SEUIL_FANTOME_SECONDES) return "ancienne";
+  const aDesArrets =
+    Array.isArray(vehicule.prochains_arrets) && vehicule.prochains_arrets.length > 0;
+  return aDesArrets ? "signal-perdu" : "hors-service";
+}
+
 export function formaterAge(secondes) {
   if (secondes === null || secondes === undefined) return "";
   if (secondes < 60) return `${secondes} s`;
@@ -202,6 +220,30 @@ export function formaterDistance(metres) {
   return `${(metres / 1000).toFixed(1).replace(".", ",")} km`;
 }
 
+// Temps de marche estimé jusqu'à un arrêt (vitesse de marche moyenne ~4,5 km/h).
+// Jamais moins d'une minute : « 0 min à pied » n'aide personne.
+export function tempsMarcheMinutes(metres, vitesseKmh = 4.5) {
+  if (metres === null || metres === undefined || !Number.isFinite(metres)) return null;
+  return Math.max(1, Math.round(metres / ((vitesseKmh * 1000) / 60)));
+}
+
+export function formaterTempsMarche(metres) {
+  const min = tempsMarcheMinutes(metres);
+  return min === null ? "" : `${min} min à pied`;
+}
+
+// --- Affluence à bord : couleur + libellé d'un niveau renvoyé par bus-data ---
+export const COULEUR_OCCUPATION = {
+  faible: "#2E7D32",
+  moyen: "#E8A13C",
+  fort: "#C4432B",
+};
+export const LIBELLE_OCCUPATION = {
+  faible: "Peu de monde",
+  moyen: "Bien rempli",
+  fort: "Bondé",
+};
+
 // Prochains passages à un arrêt, reconstitués depuis les bus en circulation.
 // Utilisé à la fois par le popup de la carte et par le panneau des arrêts.
 export function prochainsPassages(stopId, vehicules) {
@@ -217,6 +259,8 @@ export function prochainsPassages(stopId, vehicules) {
         retard: a.retard,
         horairePrevu: a.horaire_prevu,
         eta: Math.max(0, Math.round(etaMinutes)),
+        pmr: v.pmr ?? null,
+        occupation: v.occupation || null,
       });
     });
   });

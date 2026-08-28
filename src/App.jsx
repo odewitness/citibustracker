@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import CarteBus from "./components/CarteBus.jsx";
+import FicheBus from "./components/FicheBus.jsx";
 import IleStatut from "./components/IleStatut.jsx";
 import PanneauAlerte from "./components/PanneauAlerte.jsx";
 import BandeauSuivi from "./components/BandeauSuivi.jsx";
@@ -75,6 +76,9 @@ export default function App() {
   const lignesInitialiseesRef = useRef(false);
   const mapApiRef = useRef(null);
 
+  // Bus dont la fiche « trajet complet » est ouverte (sélection sur la carte).
+  const [busSelectionneId, setBusSelectionneId] = useState(null);
+
   // --- Favoris & alertes programmées ---
   const { favoris } = useFavoris();
   const favorisRef = useRef(favoris);
@@ -128,6 +132,9 @@ export default function App() {
   // un lignesInfo vide et affiche l'identifiant GTFS brut à la place du numéro.
   const lignesInfoRef = useRef(lignesInfo);
   const minuteurDesarmementRef = useRef(null);
+  // Clé du passage pour lequel un retard important a déjà été signalé, pour ne
+  // pas répéter le message à chaque relevé.
+  const retardAvertiRef = useRef(null);
   useEffect(() => { alerteRef.current = alerte; }, [alerte]);
   useEffect(() => { alerteArmeeRef.current = alerteArmee; }, [alerteArmee]);
   useEffect(() => { lignesInfoRef.current = lignesInfo; }, [lignesInfo]);
@@ -540,6 +547,7 @@ export default function App() {
     ecrireStockage(CLE_ALERTE, nouvelleAlerte);
     setAlerteArmee(true);
     derniereCleDeclencheeRef.current = null;
+    retardAvertiRef.current = null;
     setSuivi({ statut: "recherche", texte: "Recherche du prochain bus…" });
     setPanneauOuvert(false);
 
@@ -736,6 +744,20 @@ export default function App() {
       });
     }
 
+    // Perturbation à l'approche : si le bus suivi annonce un retard important,
+    // on prévient une fois (le bandeau de suivi affiche déjà le détail).
+    const retardSec = meilleurArretInfo.retard;
+    if (retardSec !== null && retardSec !== undefined && retardSec > 300) {
+      const cleRetard = cleCePassage + "|retard";
+      if (retardAvertiRef.current !== cleRetard) {
+        retardAvertiRef.current = cleRetard;
+        afficherMessage(
+          `Ligne ${nomLigne(alerteActuelle.routeId)} : +${Math.round(retardSec / 60)} min de retard annoncé`
+        );
+        if (navigator.vibrate) navigator.vibrate(120);
+      }
+    }
+
     if (meilleurEta <= alerteActuelle.seuilMinutes && !dejaDeclenchee) {
       derniereCleDeclencheeRef.current = cleCePassage;
       declencherAlerte(Math.round(meilleurEta), alerteActuelle.routeId, alerteActuelle.nomArret);
@@ -746,7 +768,12 @@ export default function App() {
   // suivi, quand elle est affichée, pousse toute la pile vers le haut.
   // Une feuille ouverte (arrêts ou alerte) recouvre le bas de l'écran : laisser
   // les boutons flottants dessous les rendait visibles mais intouchables.
-  const feuilleOuverte = panneauArretsOuvert || panneauOuvert || panneauFavorisOuvert;
+  const busSuivi = busSelectionneId
+    ? donnees.vehicules.find((v) => v.id === busSelectionneId) || null
+    : null;
+
+  const feuilleOuverte =
+    panneauArretsOuvert || panneauOuvert || panneauFavorisOuvert || Boolean(busSuivi);
 
   function hauteurBouton(rang) {
     return `calc(${(suivi ? 90 : 18) + rang * 60}px + env(safe-area-inset-bottom))`;
@@ -786,6 +813,8 @@ export default function App() {
         arretsParLigne={reseau.arrets}
         arretsInfos={reseau.arretsInfos}
         mapApiRef={mapApiRef}
+        busSelectionneId={busSelectionneId}
+        onChangerBusSelectionne={setBusSelectionneId}
       />
 
       <IleStatut
@@ -857,6 +886,21 @@ export default function App() {
       >
         ★
       </button>
+
+      <FicheBus
+        bus={busSuivi}
+        lignesInfo={lignesInfo}
+        onFermer={() => setBusSelectionneId(null)}
+        onChoisirArret={(stopId) => {
+          const a = reseau.arretsInfos[stopId];
+          setBusSelectionneId(null);
+          if (a) ouvrirFicheArret({ stopId, lat: a.lat, lon: a.lon, nom: a.nom });
+          else {
+            setArretCible(stopId);
+            setPanneauArretsOuvert(true);
+          }
+        }}
+      />
 
       <PanneauArrets
         key={"arrets-" + (arretCible || "liste")}

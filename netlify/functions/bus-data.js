@@ -25,6 +25,43 @@ function nomEffet(valeur) {
   return Object.keys(NOMS_EFFET).find((nom) => NOMS_EFFET[nom] === valeur) || null;
 }
 
+// --- Affluence à bord (VehiclePosition.occupancy_status / occupancy_percentage) ---
+// L'enum GTFS-RT a huit crans : on les ramène à trois niveaux lisibles.
+const NOMS_OCCUPATION = protobuf.transit_realtime.VehiclePosition.OccupancyStatus || {};
+const NIVEAU_PAR_STATUT = {
+  EMPTY: "faible",
+  MANY_SEATS_AVAILABLE: "faible",
+  FEW_SEATS_AVAILABLE: "moyen",
+  STANDING_ROOM_ONLY: "moyen",
+  CRUSHED_STANDING_ROOM_ONLY: "fort",
+  FULL: "fort",
+  NOT_ACCEPTING_PASSENGERS: "fort",
+};
+
+function nomOccupation(valeur) {
+  if (typeof valeur === "string") return valeur;
+  return Object.keys(NOMS_OCCUPATION).find((nom) => NOMS_OCCUPATION[nom] === valeur) || null;
+}
+
+// Renvoie { niveau, pct } ou null quand le flux ne dit rien. Attention : le champ
+// est facultatif (proto2) — absent, protobuf.js le laisse à undefined ; présent
+// et valant 0, c'est un vrai « EMPTY », à ne pas confondre.
+function interpreterOccupation(v) {
+  const brut = v.occupancyStatus;
+  const nom = brut === undefined || brut === null ? null : nomOccupation(brut);
+  let niveau = nom ? NIVEAU_PAR_STATUT[nom] || null : null;
+
+  const pct =
+    typeof v.occupancyPercentage === "number" && v.occupancyPercentage >= 0
+      ? v.occupancyPercentage
+      : null;
+  if (!niveau && pct !== null) {
+    niveau = pct >= 80 ? "fort" : pct >= 40 ? "moyen" : "faible";
+  }
+  if (!niveau && pct === null) return null;
+  return { niveau, pct };
+}
+
 // Un champ TranslatedString GTFS-RT porte plusieurs traductions : on prend le
 // français si présent, sinon la première disponible.
 function texteTraduit(champ) {
@@ -93,7 +130,7 @@ exports.handler = async function () {
   try {
     // Socle seulement : cette fonction est appelée toutes les 15 s, elle n'a
     // aucun besoin des tracés ni de la desserte complète.
-    const { arrets, lignes, destinationsParTrip } = await chargerBase();
+    const { arrets, lignes, destinationsParTrip, pmrParTrip } = await chargerBase();
 
     const resp = await fetch(FEED_URL);
     if (!resp.ok) {
@@ -183,6 +220,9 @@ exports.handler = async function () {
 
       const tripId = v.trip ? v.trip.tripId : null;
       const destination = tripId ? destinationsParTrip[tripId] || null : null;
+      // Accessibilité UFR de la course (GTFS statique) : true / false, ou null si
+      // la donnée n'est pas renseignée pour ce trip.
+      const pmr = tripId && pmrParTrip[tripId] !== undefined ? pmrParTrip[tripId] : null;
 
       // Horodatage de la position (VehiclePosition.timestamp) : permet au client
       // de repérer un « bus fantôme » dont la position n'a pas bougé depuis
@@ -203,6 +243,8 @@ exports.handler = async function () {
         retard: retard,
         prochains_arrets: prochainsArrets,
         horodatage: horodatage,
+        occupation: interpreterOccupation(v),
+        pmr: pmr,
       });
     });
 
@@ -239,3 +281,4 @@ exports.handler = async function () {
 // Exposés pour les tests unitaires.
 exports.extraireAlertes = extraireAlertes;
 exports.texteTraduit = texteTraduit;
+exports.interpreterOccupation = interpreterOccupation;

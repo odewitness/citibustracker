@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { versSecondes, servicesActifs } from "../netlify/functions/_lib/gtfs-statique.js";
+import { derniersPassages } from "../netlify/functions/horaires-arret.js";
 
 describe("versSecondes", () => {
   it("convertit une heure GTFS en secondes depuis minuit", () => {
@@ -53,5 +54,30 @@ describe("servicesActifs", () => {
 
   it("exclut un service hors de sa période de validité", () => {
     expect(servicesActifs(horaires, "20251231", 1)).toEqual(new Set());
+  });
+});
+
+describe("derniersPassages", () => {
+  const aujourdhui = new Set(["SEM"]);
+  const veille = new Set(["SEM"]);
+
+  const passages = [
+    { sec: 6 * 3600, routeId: "1", directionId: "0", serviceId: "SEM" },
+    { sec: 22 * 3600, routeId: "1", directionId: "0", serviceId: "SEM" }, // dernier "1|0" avant minuit
+    { sec: 24 * 3600 + 50 * 60, routeId: "1", directionId: "0", serviceId: "SEM" }, // course après minuit → plus tardive
+    { sec: 20 * 3600, routeId: "2", directionId: "1", serviceId: "SEM" }, // seul "2|1"
+    { sec: 21 * 3600, routeId: "3", directionId: "0", serviceId: "AUTRE" }, // service inactif → ignoré
+  ];
+
+  it("retient le passage le plus tardif de la journée d'exploitation par ligne+sens", () => {
+    const set = derniersPassages(passages, aujourdhui, veille);
+    expect(set.has("1|0|" + (24 * 3600 + 50 * 60))).toBe(true);
+    expect(set.has("1|0|" + 22 * 3600)).toBe(false);
+    expect(set.has("2|1|" + 20 * 3600)).toBe(true);
+  });
+
+  it("ignore les lignes dont le service n'est pas actif", () => {
+    const set = derniersPassages(passages, aujourdhui, veille);
+    expect([...set].some((k) => k.startsWith("3|"))).toBe(false);
   });
 });

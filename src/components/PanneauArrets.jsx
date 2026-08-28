@@ -3,6 +3,7 @@ import {
   distanceMetres,
   formaterDistance,
   formaterRetard,
+  formaterTempsMarche,
   normaliserTexte,
   prochainsPassages,
   construireLien,
@@ -144,14 +145,20 @@ export default function PanneauArrets({
                   <span className="text-[11.5px] tabular-nums text-[var(--ink-muted)]">
                     {p.eta} min
                   </span>
+                  {p.pmr === true && (
+                    <span aria-label="Accessible UFR" title="Accessible UFR" className="text-[11px]">
+                      ♿
+                    </span>
+                  )}
                 </span>
               ))
             )}
           </div>
         </button>
         {a.distance !== null && (
-          <span className="shrink-0 text-[11.5px] text-[var(--ink-muted)] tabular-nums">
-            {formaterDistance(a.distance)}
+          <span className="shrink-0 text-right text-[11.5px] text-[var(--ink-muted)] leading-tight">
+            <span className="tabular-nums">{formaterDistance(a.distance)}</span>
+            <span className="block text-[10.5px]">{formaterTempsMarche(a.distance)}</span>
           </span>
         )}
         <EtoileFavori
@@ -181,6 +188,15 @@ export default function PanneauArrets({
               </button>
               <h2 className="flex-1 min-w-0 truncate text-sm font-bold font-signage">
                 {arretsInfos[arretOuvert]?.nom || arretOuvert}
+                {arretsInfos[arretOuvert]?.pmr === true && (
+                  <span
+                    aria-label="Arrêt accessible UFR"
+                    title="Arrêt accessible UFR"
+                    className="ml-1.5 text-[12px] font-normal"
+                  >
+                    ♿
+                  </span>
+                )}
               </h2>
               <EtoileFavori
                 actif={favoris.arrets.includes(arretOuvert)}
@@ -219,7 +235,14 @@ export default function PanneauArrets({
                   >
                     <Badge info={infoLigne(p.ligne)} />
                     <div className="flex-1 min-w-0">
-                      <div className="text-[13px] truncate">{p.destination || "—"}</div>
+                      <div className="text-[13px] truncate">
+                        {p.destination || "—"}
+                        {p.pmr === true && (
+                          <span title="Accessible UFR" className="ml-1">
+                            ♿
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11.5px] text-[var(--ink-muted)]">
                         {p.horairePrevu && <>Prévu à {p.horairePrevu}</>}
                         {p.retard !== null && p.retard !== undefined && (

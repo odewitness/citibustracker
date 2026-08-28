@@ -8,16 +8,26 @@ Netlify, données issues des flux GTFS et GTFS-RT du réseau.
 
 - **Carte temps réel** : véhicules, tracés, arrêts cliquables. Les bus sont
   cerclés selon leur ponctualité (bleu en avance, vert à l'heure, ambre / rouge
-  en retard) ; un bus dont la position est figée depuis plusieurs minutes est
-  grisé et signalé (« bus fantôme »).
+  en retard). L'état de la position est nuancé : *récente*, *un peu ancienne*,
+  *signal perdu* (figée alors qu'il reste des arrêts) ou *hors service* (course
+  terminée).
+- **Fiche « trajet complet »** : toucher un bus ouvre sa frise d'arrêts à venir
+  avec heure prévue, retard et temps restant arrêt par arrêt.
+- **Affluence à bord** : niveau (peu de monde / bien rempli / bondé) et
+  pourcentage quand le flux GTFS-RT les renseigne, sur la carte, la fiche du bus
+  et les listes de passages.
+- **Accessibilité UFR** : pictogramme ♿ sur les arrêts accessibles
+  (`wheelchair_boarding`) et les courses accessibles (`wheelchair_accessible`).
 - **Infos trafic** : bandeau dépliable alimenté par les Service Alerts du flux
   GTFS-RT (déviations, arrêts non desservis, lignes suspendues).
-- **Arrêts** : recherche, tri par proximité, prochains passages temps réel et
-  **fiche horaire théorique** (calendrier GTFS) quand aucun bus ne circule.
+- **Arrêts** : recherche, tri par proximité (avec **temps de marche** estimé),
+  prochains passages temps réel et **fiche horaire théorique** (calendrier GTFS)
+  quand aucun bus ne circule, badge **« dernier passage »** de la journée.
 - **Favoris** : arrêts et lignes épinglés ; les lignes favorites sont activées
   au démarrage.
 - **Alertes** à l'approche *ou* de descente (« je suis à bord »), plusieurs
   alertes mémorisées, réarmement automatique récurrent (jours + heure).
+  Signalement d'un **retard important** annoncé pendant le suivi.
 - **Liens profonds / partage** : `?ligne=&sens=&arret=&action=` ouvre l'app
   préfiltrée ou le formulaire d'alerte prérempli ; boutons de partage natif.
 - **PWA** installable avec raccourcis d'application et cache hors-ligne des
@@ -39,17 +49,22 @@ Le site de production se déploie automatiquement depuis la branche `main`.
 
 - `src/` — application React. `App.jsx` orchestre l'état, `CarteBus.jsx` gère
   Leaflet, les panneaux (`IleStatut`, `PanneauArrets`, `PanneauAlerte`,
-  `PanneauFavoris`, `BandeauAlertes`, `BandeauSuivi`, `HorairesTheoriques`) sont
-  purement présentationnels.
+  `PanneauFavoris`, `BandeauAlertes`, `BandeauSuivi`, `HorairesTheoriques`,
+  `FicheBus`) sont purement présentationnels. La sélection d'un bus sur la carte
+  est pilotée par `App` (`busSelectionneId`) et alimente `FicheBus`.
 - `src/favoris.js` / `src/alertes.js` — état local partagé (favoris, alertes
   programmées) exposé via des hooks avec un mini-bus d'événements.
 - `netlify/functions/bus-data.js` — flux temps réel, appelé toutes les 15 s.
-  Renvoie aussi les alertes trafic (`extraireAlertes`) et l'horodatage de chaque
-  position. N'utilise que le socle du GTFS statique (arrêts, lignes, destinations).
+  Renvoie aussi les alertes trafic (`extraireAlertes`), l'horodatage de chaque
+  position, l'affluence à bord (`interpreterOccupation`) et l'accessibilité UFR
+  de la course. N'utilise que le socle du GTFS statique (arrêts, lignes,
+  destinations, drapeaux d'accessibilité).
 - `netlify/functions/reseau-statique.js` — tracés et desserte des lignes.
   Quasi-statique, mis en cache 30 min côté navigateur.
 - `netlify/functions/horaires-arret.js` — fiche horaire théorique d'un arrêt
-  (`?arret=<stop_id>`), filtrée par le calendrier GTFS du jour.
+  (`?arret=<stop_id>`), filtrée par le calendrier GTFS du jour. Marque le
+  `dernier` passage de la journée d'exploitation par ligne + sens
+  (`derniersPassages`) et renvoie l'accessibilité de l'arrêt et des courses.
 - `netlify/functions/_lib/gtfs-statique.js` — téléchargement et analyse de
   l'archive GTFS, en trois étages : `chargerBase()` (léger, pour le temps réel),
   `chargerReseau()` (tracés et dessertes) et `chargerHoraires()` (heures de
