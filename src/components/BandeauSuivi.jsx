@@ -1,9 +1,14 @@
+import { useEffect, useState } from "react";
 import { formaterRetard } from "../utils.js";
 
 // Repère de la jauge : au-delà, l'attente est trop longue pour qu'une barre de
 // progression veuille dire quelque chose. En deçà, elle se remplit à mesure que
 // le bus approche et le trait marque le moment où l'alerte sonnera.
 const MINUTES_JAUGE = 15;
+
+// Sous ce seuil, on affiche un compte à rebours m:ss qui décroît chaque seconde
+// plutôt qu'un « N min » figé entre deux relevés de 15 s.
+const SECONDES_COMPTE_A_REBOURS = 10 * 60;
 
 function Pastille({ couleur, nom }) {
   return (
@@ -16,16 +21,50 @@ function Pastille({ couleur, nom }) {
   );
 }
 
+function formaterCompteARebours(sec) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export default function BandeauSuivi({ suivi, couleurLigne, seuil = 5, onArreter }) {
+  // Heure d'arrivée absolue fournie par le suivi actif : tant qu'elle est là, on
+  // égrène localement les secondes. Les hooks doivent rester inconditionnels,
+  // d'où leur présence avant le `return null`.
+  const arriveeEpoch = suivi && suivi.statut === "suivi" ? suivi.arriveeEpoch || null : null;
+  const [maintenant, setMaintenant] = useState(() => Date.now());
+  useEffect(() => {
+    if (!arriveeEpoch) return;
+    const t = setInterval(() => setMaintenant(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [arriveeEpoch]);
+
   if (!suivi) return null;
 
   const imminent = suivi.statut === "imminent";
   // « attente » et « recherche » n'ont pas de bus à décrire : seul un texte.
   const attente = !imminent && suivi.statut !== "suivi";
 
-  const progression = attente ? 0 : Math.min(1, Math.max(0, 1 - suivi.eta / MINUTES_JAUGE));
+  const resteSec = arriveeEpoch
+    ? Math.max(0, Math.round(arriveeEpoch - maintenant / 1000))
+    : null;
+  const resteMinutes = resteSec !== null ? resteSec / 60 : suivi.eta;
+
+  const progression = attente
+    ? 0
+    : Math.min(1, Math.max(0, 1 - resteMinutes / MINUTES_JAUGE));
   const repereSeuil = Math.min(1, Math.max(0, 1 - seuil / MINUTES_JAUGE));
   const enRetard = suivi.retard !== null && suivi.retard !== undefined && suivi.retard > 60;
+
+  // Grand indicateur de droite : compte à rebours vivant sous 10 min, sinon
+  // minutes arrondies.
+  const compteARebours =
+    resteSec !== null && resteSec < SECONDES_COMPTE_A_REBOURS;
+  const grandeValeur = compteARebours
+    ? formaterCompteARebours(resteSec)
+    : resteSec !== null
+      ? Math.round(resteSec / 60)
+      : suivi.eta;
 
   return (
     <div
@@ -96,8 +135,8 @@ export default function BandeauSuivi({ suivi, couleurLigne, seuil = 5, onArreter
 
         {!attente && (
           <div className="shrink-0 text-right leading-none">
-            <span className="font-signage text-2xl font-bold tabular-nums">{suivi.eta}</span>
-            <span className="text-[11px] font-normal ml-0.5">min</span>
+            <span className="font-signage text-2xl font-bold tabular-nums">{grandeValeur}</span>
+            {!compteARebours && <span className="text-[11px] font-normal ml-0.5">min</span>}
           </div>
         )}
 

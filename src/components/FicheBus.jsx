@@ -50,6 +50,9 @@ export default function FicheBus({ bus, lignesInfo = {}, onFermer, onChoisirArre
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Trajet de la ligne ${info.nom}${bus.destination ? " vers " + bus.destination : ""}`}
       className="fixed inset-x-0 bottom-0 z-[1095] flex justify-center px-3"
       style={{ paddingBottom: "max(10px, env(safe-area-inset-bottom))" }}
     >

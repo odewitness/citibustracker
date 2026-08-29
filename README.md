@@ -15,7 +15,8 @@ Netlify, données issues des flux GTFS et GTFS-RT du réseau.
   cerclés selon leur ponctualité (bleu en avance, vert à l'heure, ambre / rouge
   en retard). L'état de la position est nuancé : *récente*, *un peu ancienne*,
   *signal perdu* (figée alors qu'il reste des arrêts) ou *hors service* (course
-  terminée).
+  terminée). Un bandeau **hors-ligne** signale des données figées ; l'affichage
+  se rafraîchit dès le retour de veille.
 - **Fiche « trajet complet »** : toucher un bus ouvre sa frise d'arrêts à venir
   avec heure prévue, retard et temps restant arrêt par arrêt.
 - **Affluence à bord** : niveau (peu de monde / bien rempli / bondé) et
@@ -32,7 +33,8 @@ Netlify, données issues des flux GTFS et GTFS-RT du réseau.
   au démarrage.
 - **Alertes** à l'approche *ou* de descente (« je suis à bord »), plusieurs
   alertes mémorisées, réarmement automatique récurrent (jours + heure).
-  Signalement d'un **retard important** annoncé pendant le suivi.
+  Signalement d'un **retard important** annoncé pendant le suivi. Le bandeau de
+  suivi égrène un **compte à rebours vivant** (m:ss) entre deux relevés.
 - **Liens profonds / partage** : `?ligne=&sens=&arret=&action=` ouvre l'app
   préfiltrée ou le formulaire d'alerte prérempli ; boutons de partage natif.
 - **PWA** installable avec raccourcis d'application et cache hors-ligne des

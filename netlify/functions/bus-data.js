@@ -69,6 +69,16 @@ function interpreterOccupation(v) {
   return { niveau, pct };
 }
 
+// Retard (en secondes) porté par un stopTimeUpdate : arrival.delay en priorité,
+// sinon departure.delay. Un retard NUL (bus pile à l'heure) est une valeur
+// légitime — la lire avec un test de véracité (`x && ...`) la confondait avec
+// « champ absent » et faisait basculer à tort sur l'autre champ.
+function retardStopTime(s) {
+  if (s && s.arrival && typeof s.arrival.delay === "number") return s.arrival.delay;
+  if (s && s.departure && typeof s.departure.delay === "number") return s.departure.delay;
+  return null;
+}
+
 // Un champ TranslatedString GTFS-RT porte plusieurs traductions : on prend le
 // français si présent, sinon la première disponible.
 function texteTraduit(champ) {
@@ -84,7 +94,7 @@ function extraireAlertes(feed, nomsArrets) {
   const maintenant = Math.floor(Date.now() / 1000);
   const alertes = [];
 
-  feed.entity.forEach((entity) => {
+  feed.entity.forEach((entity, index) => {
     const a = entity.alert;
     if (!a) return;
 
@@ -117,7 +127,10 @@ function extraireAlertes(feed, nomsArrets) {
 
     const cleEffet = nomEffet(a.effect);
     alertes.push({
-      id: entity.id || `${titre}|${lignes.join(",")}`,
+      // entity.id est censé être unique ; à défaut on retombe sur un identifiant
+      // stable ET distinct (l'index évite une collision de clé React entre deux
+      // alertes de même titre et mêmes lignes).
+      id: entity.id || `alerte-${index}-${titre}|${lignes.join(",")}`,
       effet: (cleEffet && EFFETS[cleEffet]) || null,
       effetBrut: cleEffet,
       titre,
@@ -192,10 +205,8 @@ exports.handler = async function () {
         const aVenir = tu.stopTimeUpdate.slice(idxDepart);
         prochainsArrets = aVenir.map((s) => {
           const epoch = (s.arrival && s.arrival.time) || (s.departure && s.departure.time) || null;
-          const delaiSecondes =
-            (s.arrival && typeof s.arrival.delay === "number" && s.arrival.delay) ||
-            (s.departure && typeof s.departure.delay === "number" && s.departure.delay) ||
-            0;
+          const retardBrut = retardStopTime(s);
+          const delaiSecondes = retardBrut === null ? 0 : retardBrut;
           // L'heure théorique (horaire de la fiche horaire) = heure prédite moins le retard actuel.
           const epochTheorique = epoch ? Number(epoch) - delaiSecondes : null;
           const horairePrevu = epochTheorique
@@ -218,11 +229,8 @@ exports.handler = async function () {
         if (!prochainArret) {
           prochainArret = arrets[entree.stopId] || entree.stopId;
         }
-        if (entree.arrival && typeof entree.arrival.delay === "number") {
-          retard = entree.arrival.delay;
-        } else if (entree.departure && typeof entree.departure.delay === "number") {
-          retard = entree.departure.delay;
-        }
+        const retardEntree = retardStopTime(entree);
+        if (retardEntree !== null) retard = retardEntree;
       }
 
       const tripId = v.trip ? v.trip.tripId : null;
@@ -289,3 +297,4 @@ exports.handler = async function () {
 exports.extraireAlertes = extraireAlertes;
 exports.texteTraduit = texteTraduit;
 exports.interpreterOccupation = interpreterOccupation;
+exports.retardStopTime = retardStopTime;

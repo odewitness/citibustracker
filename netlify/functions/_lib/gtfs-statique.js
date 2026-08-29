@@ -17,6 +17,30 @@ let cacheBase = null;
 let cacheReseau = null;
 let cacheHoraires = null;
 
+// Chargements en cours : la fonction horaires-arret est appelée en rafale par le
+// tableau de bord (un arrêt = un appel) dès qu'aucun bus ne circule. Sur une
+// instance encore froide, sans cette déduplication, chaque appel re-téléchargeait
+// et re-parsait l'archive en parallèle. On mémorise la promesse le temps du
+// premier chargement ; en cas d'échec on la relâche pour permettre un nouvel essai.
+let promesseZip = null;
+let promesseBase = null;
+let promesseReseau = null;
+let promesseHoraires = null;
+
+function unefois(getCache, getPromesse, setPromesse, fabrique) {
+  const cache = getCache();
+  if (cache) return Promise.resolve(cache);
+  let p = getPromesse();
+  if (!p) {
+    p = fabrique().catch((e) => {
+      setPromesse(null);
+      throw e;
+    });
+    setPromesse(p);
+  }
+  return p;
+}
+
 // wheelchair_boarding (stops.txt) / wheelchair_accessible (trips.txt) :
 // 1 = accessible en fauteuil, 2 = non accessible, 0 ou absent = information
 // inconnue. On garde la distinction non-accessible / inconnu : « pas d'info »
@@ -58,15 +82,21 @@ function parseCsv(text) {
   });
 }
 
-async function ouvrirZip() {
-  if (cacheZip) return cacheZip;
-  const resp = await fetch(GTFS_STATIQUE_URL);
-  if (!resp.ok) {
-    throw new Error("Téléchargement GTFS statique échoué : " + resp.status);
-  }
-  const buffer = Buffer.from(await resp.arrayBuffer());
-  cacheZip = new AdmZip(buffer);
-  return cacheZip;
+function ouvrirZip() {
+  return unefois(
+    () => cacheZip,
+    () => promesseZip,
+    (v) => (promesseZip = v),
+    async () => {
+      const resp = await fetch(GTFS_STATIQUE_URL);
+      if (!resp.ok) {
+        throw new Error("Téléchargement GTFS statique échoué : " + resp.status);
+      }
+      const buffer = Buffer.from(await resp.arrayBuffer());
+      cacheZip = new AdmZip(buffer);
+      return cacheZip;
+    }
+  );
 }
 
 // Lit une entrée du ZIP, ou [] si le fichier est absent de l'archive.
@@ -91,8 +121,15 @@ function libelleMajoritaire(compteurs) {
 }
 
 // --- Socle : arrêts, lignes, destinations. Rapide (petits fichiers). ---
-async function chargerBase() {
-  if (cacheBase) return cacheBase;
+function chargerBase() {
+  return unefois(
+    () => cacheBase,
+    () => promesseBase,
+    (v) => (promesseBase = v),
+    _chargerBase
+  );
+}
+async function _chargerBase() {
   const zip = await ouvrirZip();
 
   const arrets = {}; // stop_id -> nom
@@ -179,8 +216,15 @@ async function chargerBase() {
 }
 
 // --- Réseau : tracés et arrêts desservis. Lourd (shapes.txt + stop_times.txt). ---
-async function chargerReseau() {
-  if (cacheReseau) return cacheReseau;
+function chargerReseau() {
+  return unefois(
+    () => cacheReseau,
+    () => promesseReseau,
+    (v) => (promesseReseau = v),
+    _chargerReseau
+  );
+}
+async function _chargerReseau() {
   const zip = await ouvrirZip();
   const { arretsPosition, tripIdVersCle, shapeIdParCle } = await chargerBase();
 
@@ -278,8 +322,15 @@ function versSecondes(hms) {
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
-async function chargerHoraires() {
-  if (cacheHoraires) return cacheHoraires;
+function chargerHoraires() {
+  return unefois(
+    () => cacheHoraires,
+    () => promesseHoraires,
+    (v) => (promesseHoraires = v),
+    _chargerHoraires
+  );
+}
+async function _chargerHoraires() {
   const zip = await ouvrirZip();
 
   // trip_id -> ligne / sens / service / destination

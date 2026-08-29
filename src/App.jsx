@@ -25,6 +25,7 @@ import {
   lireStockage,
   ecrireStockage,
   jouerSon,
+  debloquerSon,
   busFantome,
   lireParametresUrl,
   construireLien,
@@ -73,12 +74,20 @@ export default function App() {
   const [direction, setDirection] = useState(preferencesInitiales?.direction || "tous");
   const [erreur, setErreur] = useState(null);
   const [messageFlash, setMessageFlash] = useState("");
+  const [horsLigne, setHorsLigne] = useState(
+    typeof navigator !== "undefined" && navigator.onLine === false
+  );
 
   const lignesInitialiseesRef = useRef(false);
   const mapApiRef = useRef(null);
 
   // Bus dont la fiche « trajet complet » est ouverte (sélection sur la carte).
   const [busSelectionneId, setBusSelectionneId] = useState(null);
+  // Miroir pour la boucle de polling (closure du premier rendu).
+  const busSelectionneIdRef = useRef(busSelectionneId);
+  useEffect(() => {
+    busSelectionneIdRef.current = busSelectionneId;
+  }, [busSelectionneId]);
 
   // Écran affiché : tableau de bord (accueil) ou carte plein écran. On rouvre
   // sur le dernier écran quitté ; un lien profond force la carte pour montrer
@@ -173,6 +182,20 @@ export default function App() {
         setErreur(null);
         setDonnees(data);
 
+        // Le bus dont la fiche est ouverte a disparu du flux (course terminée,
+        // signal perdu durablement) : on referme la fiche en l'expliquant plutôt
+        // que de la voir s'évanouir sans un mot.
+        const selId = busSelectionneIdRef.current;
+        if (
+          selId &&
+          Array.isArray(data.vehicules) &&
+          data.vehicules.length > 0 &&
+          !data.vehicules.some((v) => v.id === selId)
+        ) {
+          setBusSelectionneId(null);
+          afficherMessage("Ce bus a terminé sa course");
+        }
+
         if (!lignesInitialiseesRef.current && data.lignes) {
           // On conserve TOUTES les lignes du réseau : le filtrage se fait
           // désormais par onglet, pas à la source.
@@ -209,8 +232,15 @@ export default function App() {
     // mobiles pour un écran que personne ne regarde. On garde le polling
     // uniquement si une alerte est armée (le suivi doit rester à jour).
     function surChangementVisibilite() {
-      if (document.visibilityState === "visible") demarrer();
-      else if (!alerteArmeeRef.current) arreter();
+      if (document.visibilityState === "visible") {
+        // Rafraîchissement immédiat : au retour de veille, l'affichage peut
+        // dater de plusieurs minutes (le suivi d'alerte gardait le minuteur en
+        // vie, donc demarrer() seul n'aurait rien relancé).
+        recuperer();
+        demarrer();
+      } else if (!alerteArmeeRef.current) {
+        arreter();
+      }
     }
 
     demarrer();
@@ -225,6 +255,32 @@ export default function App() {
   useEffect(() => {
     lireClePush().then(setClePush);
   }, []);
+
+  // Débloque l'AudioContext au premier geste : sur iOS/Safari, une alerte
+  // réarmée automatiquement ne pourrait pas sonner sinon (aucune interaction
+  // au moment du déclenchement).
+  useEffect(() => {
+    const reveiller = () => debloquerSon();
+    window.addEventListener("pointerdown", reveiller, { once: true });
+    window.addEventListener("keydown", reveiller, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", reveiller);
+      window.removeEventListener("keydown", reveiller);
+    };
+  }, []);
+
+  // Connexion : distinguer « hors ligne » (données figées, on le dit calmement)
+  // d'une vraie erreur serveur.
+  useEffect(() => {
+    const majEtat = () => setHorsLigne(navigator.onLine === false);
+    window.addEventListener("online", majEtat);
+    window.addEventListener("offline", majEtat);
+    return () => {
+      window.removeEventListener("online", majEtat);
+      window.removeEventListener("offline", majEtat);
+    };
+  }, []);
+
 
   // Données réseau (tracés + arrêts) : quasi-statiques, récupérées une seule fois
   // au démarrage plutôt qu'à chaque poll de 15s.
@@ -395,7 +451,9 @@ export default function App() {
         setRecentrageEnCours(false);
         afficherMessage("Position indisponible — vérifie l'autorisation de localisation");
       },
-      { enableHighAccuracy: true, timeout: 8000 }
+      // maximumAge : réutilise un point GPS de moins de 30 s plutôt que de
+      // relancer une acquisition complète à chaque ouverture d'un panneau.
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
     );
   }
 
@@ -753,6 +811,9 @@ export default function App() {
         horairePrevu: meilleurArretInfo.horaire_prevu,
         retard: meilleurArretInfo.retard,
         eta: Math.max(0, Math.round(meilleurEta)),
+        // Heure d'arrivée absolue (epoch, s) : laisse le bandeau de suivi
+        // égrener un compte à rebours vivant entre deux relevés de 15 s.
+        arriveeEpoch: meilleurArretInfo.arrivee || null,
       });
     }
 
@@ -810,9 +871,11 @@ export default function App() {
       lignesInfo[b.ligne]
   ).length;
 
-  const statutTexte = erreur
-    ? erreur
-    : `${nbVisibles} bus${donnees.generated_at ? " • mis à jour à " + donnees.generated_at : ""}`;
+  const statutTexte = horsLigne
+    ? "Hors ligne — données figées"
+    : erreur
+      ? erreur
+      : `${nbVisibles} bus${donnees.generated_at ? " • mis à jour à " + donnees.generated_at : ""}`;
 
   return (
     <div className="font-sans">
@@ -862,7 +925,11 @@ export default function App() {
       />
 
       {messageFlash && (
-        <div className="fixed left-1/2 -translate-x-1/2 bottom-20 z-[1200] bg-[var(--chrome-950)] text-white px-3.5 py-2 rounded-lg text-[13px] shadow-lg">
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed left-1/2 -translate-x-1/2 bottom-20 z-[1200] bg-[var(--chrome-950)] text-white px-3.5 py-2 rounded-lg text-[13px] shadow-lg"
+        >
           {messageFlash}
         </div>
       )}
@@ -1024,7 +1091,7 @@ export default function App() {
           vehicules={donnees.vehicules}
           alertes={donnees.alertes}
           generatedAt={donnees.generated_at}
-          erreur={erreur}
+          erreur={horsLigne ? "Hors ligne — données figées" : erreur}
           position={positionUtilisateur}
           onDemanderPosition={() => localiser({ recentrer: false })}
           positionEnCours={recentrageEnCours}

@@ -148,9 +148,38 @@ export async function partagerLien(url, titre = "Bus Citibus") {
   return "echec";
 }
 
+// Un seul AudioContext réutilisé : en recréer un à chaque sonnerie fuyait des
+// ressources et, sur iOS/Safari, un contexte tout neuf reste « suspendu » tant
+// qu'un geste utilisateur ne l'a pas débloqué. Or l'alerte peut être réarmée
+// automatiquement (récurrence) et sonner alors sans interaction : on débloque
+// donc le contexte au premier tap via debloquerSon().
+let _audioCtx = null;
+function contexteAudio() {
+  if (typeof window === "undefined") return null;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  if (!_audioCtx) {
+    try {
+      _audioCtx = new AC();
+    } catch (e) {
+      return null;
+    }
+  }
+  if (_audioCtx.state === "suspended") _audioCtx.resume().catch(() => {});
+  return _audioCtx;
+}
+
+// À câbler sur un vrai geste utilisateur (pointerdown/keydown) : « réveille »
+// l'AudioContext pour que jouerSon() puisse encore émettre plus tard sans
+// interaction.
+export function debloquerSon() {
+  contexteAudio();
+}
+
 export function jouerSon() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = contexteAudio();
+    if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "sine";
