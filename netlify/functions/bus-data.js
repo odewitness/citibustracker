@@ -43,16 +43,23 @@ function nomOccupation(valeur) {
   return Object.keys(NOMS_OCCUPATION).find((nom) => NOMS_OCCUPATION[nom] === valeur) || null;
 }
 
-// Renvoie { niveau, pct } ou null quand le flux ne dit rien. Attention : le champ
-// est facultatif (proto2) — absent, protobuf.js le laisse à undefined ; présent
-// et valant 0, c'est un vrai « EMPTY », à ne pas confondre.
+// Renvoie { niveau, pct } ou null quand le flux ne dit rien. Attention : ces
+// champs sont facultatifs (proto2). protobuf.js ne pose PAS de propriété propre
+// pour un champ absent du binaire, mais sa lecture retombe sur le prototype et
+// renvoie quand même 0 (soit « EMPTY », soit 0 %). Le flux Citibus n'envoie
+// jamais l'affluence : sans le test de présence ci-dessous, tous les bus
+// affichaient « Peu de monde · 0 % ». On ne se fie donc qu'aux champs réellement
+// présents sur le wire (hasOwnProperty).
 function interpreterOccupation(v) {
-  const brut = v.occupancyStatus;
+  const aStatut = Object.prototype.hasOwnProperty.call(v, "occupancyStatus");
+  const aPct = Object.prototype.hasOwnProperty.call(v, "occupancyPercentage");
+
+  const brut = aStatut ? v.occupancyStatus : null;
   const nom = brut === undefined || brut === null ? null : nomOccupation(brut);
   let niveau = nom ? NIVEAU_PAR_STATUT[nom] || null : null;
 
   const pct =
-    typeof v.occupancyPercentage === "number" && v.occupancyPercentage >= 0
+    aPct && typeof v.occupancyPercentage === "number" && v.occupancyPercentage >= 0
       ? v.occupancyPercentage
       : null;
   if (!niveau && pct !== null) {

@@ -10,6 +10,14 @@ describe("interpreterOccupation", () => {
     expect(interpreterOccupation({})).toBeNull();
   });
 
+  it("ignore les valeurs par défaut proto2 d'un flux sans affluence", () => {
+    // protobuf.js ne pose pas de propriété propre pour un champ absent du binaire,
+    // mais sa lecture retombe sur le prototype et renvoie 0. Cas réel du flux
+    // Citibus, qui n'envoie ni occupancyStatus ni occupancyPercentage.
+    const messageDecode = Object.create({ occupancyStatus: 0, occupancyPercentage: 0 });
+    expect(interpreterOccupation(messageDecode)).toBeNull();
+  });
+
   it("ramène l'enum numérique à trois niveaux", () => {
     expect(interpreterOccupation({ occupancyStatus: 0 })).toEqual({ niveau: "faible", pct: null });
     expect(interpreterOccupation({ occupancyStatus: 3 })).toEqual({ niveau: "moyen", pct: null });

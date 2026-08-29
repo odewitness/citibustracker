@@ -1,15 +1,10 @@
 import { useCallback, useEffect, useRef } from "react";
 import L from "leaflet";
 import {
-  agePosition,
   busFantome,
   categorieRetard,
-  COULEUR_OCCUPATION,
   COULEUR_RETARD,
-  etatPosition,
-  formaterAge,
   formaterRetard,
-  LIBELLE_OCCUPATION,
   prochainsPassages,
 } from "../utils.js";
 
@@ -81,56 +76,6 @@ function appliquerIcone(entree, etat) {
       busFantome(entree.bus)
     )
   );
-}
-
-function construirePopup(bus, info) {
-  const texteArret = bus.prochain_arret
-    ? `Prochain arrêt : ${bus.prochain_arret}`
-    : "Horaires non disponibles";
-  const texteDestination = bus.destination
-    ? `<div class="destination">→ ${bus.destination}</div>`
-    : "";
-  let texteRetard = "";
-  if (bus.retard !== null && bus.retard !== undefined) {
-    const cls = bus.retard > 60 ? "retard-neg" : bus.retard < -60 ? "retard-pos" : "";
-    texteRetard = `<div class="${cls}">${formaterRetard(bus.retard)}</div>`;
-  }
-
-  // Affluence à bord, quand le flux la renseigne.
-  const occ = bus.occupation;
-  const texteOccupation =
-    occ && occ.niveau
-      ? `<div style="color:${COULEUR_OCCUPATION[occ.niveau]};font-weight:600;">${
-          LIBELLE_OCCUPATION[occ.niveau]
-        }${occ.pct !== null && occ.pct !== undefined ? ` · ${occ.pct} %` : ""}</div>`
-      : "";
-
-  // Accessibilité UFR de la course.
-  const textePmr =
-    bus.pmr === true
-      ? `<div>♿ Course accessible</div>`
-      : bus.pmr === false
-        ? `<div style="color:#5B6B72;">Course non accessible UFR</div>`
-        : "";
-
-  // Fraîcheur de la position : on distingue « un peu ancienne » de « signal
-  // perdu » et de « hors service » (course terminée / au dépôt).
-  const age = agePosition(bus);
-  const etat = etatPosition(bus);
-  const texteEtat =
-    etat === "ancienne"
-      ? `<div style="color:#5B6B72;">Position vieille de ${formaterAge(age)}</div>`
-      : etat === "signal-perdu"
-        ? `<div class="fantome">⚠ Signal perdu depuis ${formaterAge(age)}</div>`
-        : etat === "hors-service"
-          ? `<div class="fantome">⚠ Hors service (position figée)</div>`
-          : "";
-
-  return `<div class="popup-bus"><b>Ligne ${info.nom} — Bus ${bus.label}</b>
-    ${texteDestination}
-    <div>Vitesse : ${bus.vitesse} km/h</div>
-    <div>${texteArret}</div>${texteRetard}${texteOccupation}${textePmr}${texteEtat}
-    <div style="margin-top:5px;color:#123A4C;font-weight:600;">Toucher le bus : trajet complet ▸</div></div>`;
 }
 
 // Construit le contenu du "tableau des prochains passages" pour un arrêt donné,
@@ -301,12 +246,12 @@ export default function CarteBus({
         existant.info = info;
         existant.marker.setLatLng([bus.lat, bus.lon]);
         appliquerIcone(existant, etat);
-        // Rafraîchit aussi le contenu : un popup resté ouvert affiche désormais
-        // le prochain arrêt et le retard à jour, sans se refermer.
-        existant.marker.setPopupContent(construirePopup(bus, info));
         return;
       }
 
+      // Pas de popup Leaflet sur les bus : un tap ouvre directement la fiche
+      // « trajet complet » (FicheBus), qui reprend et enrichit ces infos. Une
+      // bulle en plus restait affichée derrière la fiche puis après sa fermeture.
       const marker = L.marker([bus.lat, bus.lon], {
         icon: creerIconeBus(
           info.couleur,
@@ -317,7 +262,7 @@ export default function CarteBus({
           categorieRetard(bus.retard),
           busFantome(bus)
         ),
-      }).bindPopup(construirePopup(bus, info));
+      });
       marker.on("click", () => {
         selectionner(busSelectionneIdRef.current === bus.id ? null : bus.id);
       });
