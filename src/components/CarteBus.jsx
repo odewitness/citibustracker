@@ -161,6 +161,10 @@ export default function CarteBus({
           carte.panTo([lat, lon], { animate: true });
           if (carte.getZoom() < 15) carte.setZoom(15);
         },
+        ajusterSur(points) {
+          if (!Array.isArray(points) || points.length === 0) return;
+          carte.fitBounds(points, { maxZoom: 15, padding: [50, 50] });
+        },
         afficherPositionUtilisateur(lat, lon) {
           if (marqueurMoiRef.current) carte.removeLayer(marqueurMoiRef.current);
           marqueurMoiRef.current = L.marker([lat, lon], {

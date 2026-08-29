@@ -6,7 +6,7 @@ const CLE_VUES = "citibus:alertes-vues";
 // Bandeau d'information trafic (déviations, arrêts non desservis, lignes
 // suspendues) issu des Service Alerts du flux GTFS-RT. Replié par défaut :
 // une pastille compacte sous l'île de statut, dépliable au tap.
-export default function BandeauAlertes({ alertes = [], lignesInfo = {} }) {
+export default function BandeauAlertes({ alertes = [], lignesInfo = {}, onVoirLigne }) {
   const [ouvert, setOuvert] = useState(false);
   const [vues, setVues] = useState(() => new Set(lireStockage(CLE_VUES) || []));
 
@@ -59,15 +59,26 @@ export default function BandeauAlertes({ alertes = [], lignesInfo = {} }) {
                           {a.effet}
                         </span>
                       )}
-                      {a.lignes.map((routeId) => (
-                        <span
-                          key={routeId}
-                          className="rounded-full px-2 py-[1px] text-[10.5px] font-bold font-signage"
-                          style={{ background: couleur(routeId) }}
-                        >
-                          {nom(routeId)}
-                        </span>
-                      ))}
+                      {a.lignes.map((routeId) =>
+                        onVoirLigne ? (
+                          <button
+                            key={routeId}
+                            onClick={() => onVoirLigne(routeId)}
+                            className="rounded-full px-2 py-[1px] text-[10.5px] font-bold font-signage active:scale-95"
+                            style={{ background: couleur(routeId) }}
+                          >
+                            {nom(routeId)}
+                          </button>
+                        ) : (
+                          <span
+                            key={routeId}
+                            className="rounded-full px-2 py-[1px] text-[10.5px] font-bold font-signage"
+                            style={{ background: couleur(routeId) }}
+                          >
+                            {nom(routeId)}
+                          </span>
+                        )
+                      )}
                     </div>
                     <div className="text-[12.5px] font-semibold leading-snug">{a.titre}</div>
                     {a.description && (

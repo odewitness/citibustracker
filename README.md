@@ -19,6 +19,12 @@ Netlify, données issues des flux GTFS et GTFS-RT du réseau.
   se rafraîchit dès le retour de veille.
 - **Fiche « trajet complet »** : toucher un bus ouvre sa frise d'arrêts à venir
   avec heure prévue, retard et temps restant arrêt par arrêt.
+- **« Ligne N en direct »** : tous les véhicules d'une ligne d'un coup d'œil,
+  dans l'ordre du trajet, avec retard, état de position, affluence et repérage
+  des **paquets** (bus collés). Bande de santé (bus en service, retard médian,
+  signaux perdus). Quand plus rien ne circule : prochains **départs théoriques**,
+  y compris le lendemain. Accès depuis la fiche d'un bus, l'île de statut, un
+  badge d'info trafic ou le lien `?ligne=…&vue=ligne`.
 - **Affluence à bord** : niveau (peu de monde / bien rempli / bondé) et
   pourcentage quand le flux GTFS-RT les renseigne, sur la carte, la fiche du bus
   et les listes de passages.
@@ -35,8 +41,9 @@ Netlify, données issues des flux GTFS et GTFS-RT du réseau.
   alertes mémorisées, réarmement automatique récurrent (jours + heure).
   Signalement d'un **retard important** annoncé pendant le suivi. Le bandeau de
   suivi égrène un **compte à rebours vivant** (m:ss) entre deux relevés.
-- **Liens profonds / partage** : `?ligne=&sens=&arret=&action=` ouvre l'app
-  préfiltrée ou le formulaire d'alerte prérempli ; boutons de partage natif.
+- **Liens profonds / partage** : `?ligne=&sens=&arret=&action=&vue=` ouvre l'app
+  préfiltrée, le formulaire d'alerte prérempli ou la fiche « ligne en direct » ;
+  boutons de partage natif.
 - **PWA** installable avec raccourcis d'application et cache hors-ligne des
   ressources statiques (jamais du document HTML).
 
@@ -57,10 +64,10 @@ Le site de production se déploie automatiquement depuis la branche `main`.
 - `src/` — application React. `App.jsx` orchestre l'état (dont `ecran` :
   `"tableau"` ou `"carte"`, mémorisé), `CarteBus.jsx` gère Leaflet, les panneaux
   (`TableauDeBord`, `IleStatut`, `PanneauArrets`, `PanneauAlerte`,
-  `PanneauFavoris`, `BandeauAlertes`, `BandeauSuivi`, `HorairesTheoriques`,
-  `FicheBus`) sont purement présentationnels. La carte reste montée en fond ; le
-  tableau de bord la recouvre. La sélection d'un bus est pilotée par `App`
-  (`busSelectionneId`) et alimente `FicheBus`.
+  `PanneauFavoris`, `PanneauLigne`, `BandeauAlertes`, `BandeauSuivi`,
+  `HorairesTheoriques`, `FicheBus`) sont purement présentationnels. La carte
+  reste montée en fond ; le tableau de bord la recouvre. La sélection d'un bus
+  est pilotée par `App` (`busSelectionneId`) et alimente `FicheBus`.
 - `src/favoris.js` / `src/alertes.js` — état local partagé (favoris, alertes
   programmées) exposé via des hooks avec un mini-bus d'événements.
 - `netlify/functions/bus-data.js` — flux temps réel, appelé toutes les 15 s.
@@ -74,10 +81,17 @@ Le site de production se déploie automatiquement depuis la branche `main`.
   (`?arret=<stop_id>`), filtrée par le calendrier GTFS du jour. Marque le
   `dernier` passage de la journée d'exploitation par ligne + sens
   (`derniersPassages`) et renvoie l'accessibilité de l'arrêt et des courses.
+- `netlify/functions/horaires-ligne.js` — prochains départs théoriques d'une
+  ligne (`?ligne=<route_id>`), en balayant aujourd'hui et les jours suivants
+  (reprise « demain 06:12 » quand la ligne est à l'arrêt). Alimente l'état vide
+  de `PanneauLigne`.
 - `netlify/functions/_lib/gtfs-statique.js` — téléchargement et analyse de
   l'archive GTFS, en trois étages : `chargerBase()` (léger, pour le temps réel),
   `chargerReseau()` (tracés et dessertes) et `chargerHoraires()` (heures de
-  passage + calendrier, le plus lourd — réservé à `horaires-arret`).
+  passage + calendrier + départs par ligne, le plus lourd — réservé aux
+  fonctions `horaires-*`). Chargements dédupliqués (`unefois`).
+- `netlify/functions/_lib/temps-paris.js` — helpers de date ancrés sur
+  Europe/Paris, partagés par les fonctions `horaires-*`.
 
 ## Notifications push (optionnel)
 

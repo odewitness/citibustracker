@@ -1,4 +1,5 @@
 const { chargerBase, chargerHoraires, servicesActifs } = require("./_lib/gtfs-statique.js");
+const { maintenantParis, dateDecalee, formaterHM } = require("./_lib/temps-paris.js");
 
 // Fiche horaire théorique d'un arrêt : les prochains passages prévus d'après le
 // GTFS statique, filtrés par le calendrier du jour. Complète le temps réel quand
@@ -19,50 +20,6 @@ function reponse(code, corps, maxAge = 0) {
     },
     body: JSON.stringify(corps),
   };
-}
-
-// Date (YYYYMMDD) et seconde du jour à Paris, indépendamment du fuseau du serveur.
-function maintenantParis() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Europe/Paris",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  })
-    .formatToParts(new Date())
-    .reduce((o, p) => ((o[p.type] = p.value), o), {});
-
-  const heure = Number(parts.hour) % 24; // certains moteurs renvoient "24" à minuit
-  const dateYYYYMMDD = `${parts.year}${parts.month}${parts.day}`;
-  const secondeDuJour = heure * 3600 + Number(parts.minute) * 60 + Number(parts.second);
-  const jourSemaine = new Date(
-    Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day))
-  ).getUTCDay();
-
-  return { dateYYYYMMDD, secondeDuJour, jourSemaine };
-}
-
-function dateDecalee(dateYYYYMMDD, deltaJours) {
-  const y = Number(dateYYYYMMDD.slice(0, 4));
-  const m = Number(dateYYYYMMDD.slice(4, 6));
-  const d = Number(dateYYYYMMDD.slice(6, 8));
-  const t = new Date(Date.UTC(y, m - 1, d + deltaJours));
-  const p = (n) => String(n).padStart(2, "0");
-  return {
-    date: `${t.getUTCFullYear()}${p(t.getUTCMonth() + 1)}${p(t.getUTCDate())}`,
-    jour: t.getUTCDay(),
-  };
-}
-
-function formaterHM(secondeDuJour) {
-  const total = ((secondeDuJour % 86400) + 86400) % 86400;
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 // Dernier passage de la journée d'exploitation pour chaque ligne+sens desservant

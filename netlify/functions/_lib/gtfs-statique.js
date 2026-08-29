@@ -347,6 +347,7 @@ async function _chargerHoraires() {
   });
 
   const horairesParArret = {}; // stop_id -> [{ sec, routeId, directionId, serviceId, headsign, pmr }]
+  const premierSecParTrip = {}; // trip_id -> heure de départ (plus petit sec de la course)
   lireTable(zip, "stop_times.txt").forEach((row) => {
     if (!row.trip_id || !row.stop_id) return;
     const info = infoTrip[row.trip_id];
@@ -362,9 +363,32 @@ async function _chargerHoraires() {
       headsign: info.headsign,
       pmr: info.pmr,
     });
+    if (premierSecParTrip[row.trip_id] === undefined || sec < premierSecParTrip[row.trip_id]) {
+      premierSecParTrip[row.trip_id] = sec;
+    }
   });
   Object.keys(horairesParArret).forEach((id) =>
     horairesParArret[id].sort((a, b) => a.sec - b.sec)
+  );
+
+  // Heure de départ de chaque course par ligne : sert la fiche « ligne en
+  // direct » quand aucun bus ne circule (nuit, dimanche) pour annoncer le
+  // prochain départ théorique, y compris le lendemain.
+  const departsParLigne = {}; // route_id -> [{ sec, directionId, serviceId, headsign, pmr }]
+  Object.keys(premierSecParTrip).forEach((tripId) => {
+    const info = infoTrip[tripId];
+    if (!info || !info.routeId) return;
+    if (!departsParLigne[info.routeId]) departsParLigne[info.routeId] = [];
+    departsParLigne[info.routeId].push({
+      sec: premierSecParTrip[tripId],
+      directionId: info.directionId,
+      serviceId: info.serviceId,
+      headsign: info.headsign,
+      pmr: info.pmr,
+    });
+  });
+  Object.keys(departsParLigne).forEach((id) =>
+    departsParLigne[id].sort((a, b) => a.sec - b.sec)
   );
 
   // calendar.txt : jours de circulation réguliers de chaque service.
@@ -391,7 +415,7 @@ async function _chargerHoraires() {
     exceptions[row.service_id + "|" + row.date] = row.exception_type;
   });
 
-  cacheHoraires = { horairesParArret, calendrier, exceptions };
+  cacheHoraires = { horairesParArret, departsParLigne, calendrier, exceptions };
   return cacheHoraires;
 }
 

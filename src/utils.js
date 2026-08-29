@@ -113,7 +113,7 @@ export function lireParametresUrl(recherche) {
     recherche ?? (typeof window !== "undefined" ? window.location.search : "")
   );
   const obj = {};
-  ["ligne", "sens", "arret", "action"].forEach((cle) => {
+  ["ligne", "sens", "arret", "action", "vue"].forEach((cle) => {
     const valeur = params.get(cle);
     if (valeur) obj[cle] = valeur;
   });
@@ -316,4 +316,103 @@ export function prochainsPassages(stopId, vehicules) {
     });
   });
   return passages.sort((x, y) => x.eta - y.eta);
+}
+
+// --- « Ligne en direct » : ordonner et résumer les bus d'une ligne ---
+
+// Médiane d'une liste de nombres (ignore null/undefined/NaN). Plus robuste que
+// la moyenne pour un « retard typique » : un seul bus très en retard ne la tire
+// pas.
+export function medianeNombres(valeurs) {
+  const v = (valeurs || [])
+    .filter((n) => typeof n === "number" && Number.isFinite(n))
+    .sort((a, b) => a - b);
+  if (v.length === 0) return null;
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : Math.round((v[m - 1] + v[m]) / 2);
+}
+
+// Position d'un bus le long de sa ligne = index de son prochain arrêt dans la
+// desserte de référence du sens. `prochain_arret` est un NOM ; seul
+// `prochains_arrets[0].stop_id` est un identifiant exploitable.
+export function positionSurLigne(bus, ordreStopIds) {
+  const a0 = bus && Array.isArray(bus.prochains_arrets) ? bus.prochains_arrets[0] : null;
+  const stopId = a0 && a0.stop_id;
+  if (!stopId || !Array.isArray(ordreStopIds)) return null;
+  const idx = ordreStopIds.indexOf(stopId);
+  return idx === -1 ? null : idx;
+}
+
+// Marque, dans une liste de positions déjà ordonnée pour l'affichage, les bus
+// « collés » au précédent (moins de `seuilStops` arrêts d'écart) : c'est le
+// signe d'un paquet, donc d'un trou de desserte derrière.
+export function detecterPaquets(positions, seuilStops = 2) {
+  return (positions || []).map((pos, i) => {
+    if (i === 0) return false;
+    const prec = positions[i - 1];
+    return pos !== null && prec !== null && Math.abs(pos - prec) <= seuilStops;
+  });
+}
+
+// Regroupe les véhicules d'une ligne par sens, chaque groupe ordonné du départ
+// vers le terminus (position géographique, ETA en repli). `direction` = "tous"
+// ou un directionId précis.
+export function ordonnerBusLigne(vehicules, routeId, direction, arretsParDirection = {}) {
+  const parSens = new Map();
+  (vehicules || []).forEach((v) => {
+    if (String(v.ligne) !== String(routeId)) return;
+    const dir = String(v.direction);
+    if (direction !== "tous" && dir !== String(direction)) return;
+    if (!parSens.has(dir)) {
+      parSens.set(dir, { ordre: arretsParDirection[routeId + "|" + dir] || null, liste: [] });
+    }
+    const a0 = Array.isArray(v.prochains_arrets) ? v.prochains_arrets[0] : null;
+    parSens.get(dir).liste.push({
+      bus: v,
+      pos: positionSurLigne(v, arretsParDirection[routeId + "|" + dir] || null),
+      eta: a0 && a0.arrivee ? a0.arrivee : Infinity,
+    });
+  });
+
+  return Array.from(parSens.keys())
+    .sort()
+    .map((dir) => {
+      const liste = parSens.get(dir).liste;
+      liste.sort((x, y) => {
+        if (x.pos !== null && y.pos !== null && x.pos !== y.pos) return x.pos - y.pos;
+        if (x.pos !== null && y.pos === null) return -1;
+        if (x.pos === null && y.pos !== null) return 1;
+        return x.eta - y.eta;
+      });
+      const positions = liste.map((e) => e.pos);
+      return {
+        direction: dir,
+        bus: liste.map((e) => e.bus),
+        colle: detecterPaquets(positions),
+      };
+    });
+}
+
+// Bandeau de santé : combien de bus roulent, combien ont perdu le signal, quel
+// est le retard médian.
+export function resumeLigne(vehicules, routeId) {
+  const bus = (vehicules || []).filter((v) => String(v.ligne) === String(routeId));
+  let enService = 0;
+  let fantomes = 0;
+  const retards = [];
+  bus.forEach((v) => {
+    const etat = etatPosition(v);
+    if (etat === "signal-perdu" || etat === "hors-service") {
+      fantomes += 1;
+      return;
+    }
+    enService += 1;
+    if (v.retard !== null && v.retard !== undefined) retards.push(v.retard);
+  });
+  return {
+    total: bus.length,
+    enService,
+    fantomes,
+    retardMedianSec: medianeNombres(retards),
+  };
 }

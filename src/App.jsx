@@ -7,6 +7,7 @@ import BandeauSuivi from "./components/BandeauSuivi.jsx";
 import BandeauAlertes from "./components/BandeauAlertes.jsx";
 import PanneauArrets from "./components/PanneauArrets.jsx";
 import PanneauFavoris from "./components/PanneauFavoris.jsx";
+import PanneauLigne from "./components/PanneauLigne.jsx";
 import TableauDeBord from "./components/TableauDeBord.jsx";
 import { abonnerAlerte, annulerAlerteServeur, lireClePush } from "./push.js";
 import { useFavoris } from "./favoris.js";
@@ -88,6 +89,9 @@ export default function App() {
   useEffect(() => {
     busSelectionneIdRef.current = busSelectionneId;
   }, [busSelectionneId]);
+
+  // Fiche « ligne en direct » : { routeId, sens } ou null.
+  const [ligneDetail, setLigneDetail] = useState(null);
 
   // Écran affiché : tableau de bord (accueil) ou carte plein écran. On rouvre
   // sur le dernier écran quitté ; un lien profond force la carte pour montrer
@@ -341,6 +345,18 @@ export default function App() {
     if (PARAMS_URL.sens === "0" || PARAMS_URL.sens === "1") setDirection(PARAMS_URL.sens);
   }, [lignesInfo]);
 
+  // Lien profond ?ligne=…&vue=ligne : ouvre la fiche « ligne en direct » dès que
+  // les lignes sont connues.
+  const vueLigneAppliqueeRef = useRef(false);
+  useEffect(() => {
+    if (vueLigneAppliqueeRef.current) return;
+    if (PARAMS_URL.vue !== "ligne" || !PARAMS_URL.ligne) return;
+    if (!lignesInfo[PARAMS_URL.ligne]) return;
+    vueLigneAppliqueeRef.current = true;
+    ouvrirPanneauLigne(PARAMS_URL.ligne, PARAMS_URL.sens || "tous");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lignesInfo]);
+
   // Lien profond ?action=alerte&arret=… : préremplit le formulaire d'alerte une
   // fois la desserte théorique connue.
   const lienAlerteAppliqueRef = useRef(false);
@@ -388,6 +404,17 @@ export default function App() {
 
   // Le panneau d'alerte, lui, propose toutes les lignes des deux onglets.
   const idsAlerte = useMemo(() => [...idsPrincipales, ...idsAutres], [idsPrincipales, idsAutres]);
+
+  // Lignes ayant au moins un véhicule dans le flux : sélecteur de la fiche
+  // « ligne en direct ».
+  const idsLignesEnDirect = useMemo(
+    () =>
+      trierParNom(
+        cleLignesEnCirculation.split(",").filter((id) => id && lignesInfo[id]),
+        lignesInfo
+      ),
+    [cleLignesEnCirculation, lignesInfo]
+  );
 
   // Lignes réellement affichées sur la carte : celles de l'onglet courant qui
   // ne sont pas désactivées.
@@ -480,6 +507,54 @@ export default function App() {
     setPanneauOuvert(false);
     setPanneauArretsOuvert(false);
     setPanneauFavorisOuvert(true);
+  }
+
+  // Ouvre la fiche « ligne en direct ». Sans routeId (bouton générique de l'île
+  // de statut), on prend la première ligne active qui roule, sinon la première
+  // ligne en circulation.
+  function ouvrirPanneauLigne(routeId, sens = "tous") {
+    let cible = routeId && lignesInfo[routeId] ? routeId : null;
+    if (!cible) {
+      cible =
+        [...lignesActivesCourantes].find((id) => idsLignesEnDirect.includes(id)) ||
+        idsLignesEnDirect[0] ||
+        null;
+    }
+    if (!cible) {
+      afficherMessage("Aucune ligne en circulation pour le moment");
+      return;
+    }
+    setPanneauOuvert(false);
+    setPanneauArretsOuvert(false);
+    setPanneauFavorisOuvert(false);
+    setBusSelectionneId(null);
+    setLigneDetail({ routeId: cible, sens });
+  }
+
+  // Depuis la fiche « ligne en direct » : rend la ligne visible sur la carte,
+  // ferme la fiche et recadre sur ses véhicules.
+  function afficherLigneSurCarte(routeId) {
+    if (estLignePrincipale(lignesInfo[routeId])) {
+      setGroupe(GROUPE_PRINCIPALES);
+      setLignesActives((prec) => new Set(prec).add(routeId));
+    } else {
+      setGroupe(GROUPE_AUTRES);
+      setAutresMasquees((prec) => {
+        const suivant = new Set(prec);
+        suivant.delete(routeId);
+        return suivant;
+      });
+    }
+    const points = donnees.vehicules
+      .filter(
+        (v) =>
+          String(v.ligne) === String(routeId) &&
+          Number.isFinite(v.lat) &&
+          Number.isFinite(v.lon)
+      )
+      .map((v) => [v.lat, v.lon]);
+    if (points.length > 0) mapApiRef.current?.ajusterSur(points);
+    setLigneDetail(null);
   }
 
   // Ouvre la fiche d'un arrêt (depuis les favoris ou un lien) : recadre la carte
@@ -846,7 +921,11 @@ export default function App() {
     : null;
 
   const feuilleOuverte =
-    panneauArretsOuvert || panneauOuvert || panneauFavorisOuvert || Boolean(busSuivi);
+    panneauArretsOuvert ||
+    panneauOuvert ||
+    panneauFavorisOuvert ||
+    Boolean(busSuivi) ||
+    Boolean(ligneDetail);
 
   function hauteurBouton(rang) {
     return `calc(${(suivi ? 90 : 18) + rang * 60}px + env(safe-area-inset-bottom))`;
@@ -911,9 +990,14 @@ export default function App() {
             direction={direction}
             onChangerDirection={setDirection}
             onRetourTableau={() => setEcran("tableau")}
+            onVoirLigneDetail={() => ouvrirPanneauLigne(null)}
           />
 
-          <BandeauAlertes alertes={donnees.alertes} lignesInfo={lignesInfo} />
+          <BandeauAlertes
+            alertes={donnees.alertes}
+            lignesInfo={lignesInfo}
+            onVoirLigne={(id) => ouvrirPanneauLigne(id)}
+          />
         </>
       )}
 
@@ -983,6 +1067,11 @@ export default function App() {
         bus={busSuivi}
         lignesInfo={lignesInfo}
         onFermer={() => setBusSelectionneId(null)}
+        onVoirLigne={
+          busSuivi
+            ? () => ouvrirPanneauLigne(String(busSuivi.ligne), String(busSuivi.direction))
+            : undefined
+        }
         onChoisirArret={(stopId) => {
           const a = reseau.arretsInfos[stopId];
           setBusSelectionneId(null);
@@ -1069,6 +1158,40 @@ export default function App() {
         }
       />
 
+      {ligneDetail && (
+        <PanneauLigne
+          key={"ligne-" + ligneDetail.routeId}
+          ouvert
+          routeId={ligneDetail.routeId}
+          sensInitial={ligneDetail.sens}
+          ids={
+            idsLignesEnDirect.includes(ligneDetail.routeId)
+              ? idsLignesEnDirect
+              : [ligneDetail.routeId, ...idsLignesEnDirect]
+          }
+          onChangerLigne={(id) => setLigneDetail({ routeId: id, sens: "tous" })}
+          onFermer={() => setLigneDetail(null)}
+          lignesInfo={lignesInfo}
+          vehicules={donnees.vehicules}
+          arretsParDirection={reseau.arretsParDirection}
+          directionsDisponibles={directionsDisponiblesPour(ligneDetail.routeId)}
+          alertes={donnees.alertes}
+          onChoisirBus={(id) => {
+            setLigneDetail(null);
+            setBusSelectionneId(id);
+            const b = donnees.vehicules.find((v) => v.id === id);
+            if (b && Number.isFinite(b.lat) && Number.isFinite(b.lon)) {
+              mapApiRef.current?.centrerSur(b.lat, b.lon, 15);
+            }
+          }}
+          onOuvrirArrets={() => {
+            setLigneDetail(null);
+            ouvrirPanneauArrets();
+          }}
+          onAfficherSurCarte={afficherLigneSurCarte}
+        />
+      )}
+
       {ecran === "carte" && (
         <button
           onClick={recentrerSurMoi}
@@ -1106,6 +1229,10 @@ export default function App() {
           onCreerAlerte={(stopId) => {
             setEcran("carte");
             creerAlertePourArret(stopId);
+          }}
+          onVoirLigne={(id) => {
+            setEcran("carte");
+            ouvrirPanneauLigne(id);
           }}
         />
       )}

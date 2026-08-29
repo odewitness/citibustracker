@@ -48,6 +48,7 @@ export default function IleStatut({
   direction,
   onChangerDirection,
   onRetourTableau,
+  onVoirLigneDetail,
 }) {
   // Les filtres sont repliés par défaut : l'encadré ne mange plus la carte,
   // et l'essentiel (nombre de bus + heure de mise à jour) reste toujours visible.
@@ -169,6 +170,15 @@ export default function IleStatut({
                 </button>
               )}
             </div>
+
+            {onVoirLigneDetail && ids.length > 0 && (
+              <button
+                onClick={onVoirLigneDetail}
+                className="w-full rounded-full py-1.5 text-[11.5px] font-semibold bg-white/12 text-white/90 active:bg-white/20"
+              >
+                Voir une ligne en direct
+              </button>
+            )}
           </div>
         )}
       </div>

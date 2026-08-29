@@ -118,6 +118,7 @@ export default function TableauDeBord({
   onOuvrirCarte,
   onOuvrirArret,
   onCreerAlerte,
+  onVoirLigne,
   suiviActif,
 }) {
   const { favoris, basculerArret } = useFavoris();
@@ -204,7 +205,16 @@ export default function TableauDeBord({
                         nom: routeId,
                         couleur: "var(--chrome-800)",
                       };
-                      return (
+                      return onVoirLigne ? (
+                        <button
+                          key={routeId}
+                          onClick={() => onVoirLigne(routeId)}
+                          className="rounded-full px-2 py-[1px] text-[10px] font-bold font-signage active:scale-95"
+                          style={{ background: info.couleur }}
+                        >
+                          {info.nom}
+                        </button>
+                      ) : (
                         <span
                           key={routeId}
                           className="rounded-full px-2 py-[1px] text-[10px] font-bold font-signage"

@@ -12,7 +12,7 @@ import {
 // véhicule sur la carte. Reprend les prochains arrêts déjà calculés côté serveur
 // (bus.prochains_arrets) et les présente en frise, avec l'heure prévue, le
 // retard et le temps restant arrêt par arrêt.
-export default function FicheBus({ bus, lignesInfo = {}, onFermer, onChoisirArret }) {
+export default function FicheBus({ bus, lignesInfo = {}, onFermer, onChoisirArret, onVoirLigne }) {
   const info = bus ? lignesInfo[bus.ligne] || { nom: bus.ligne, couleur: "var(--chrome-800)" } : null;
 
   // L'horloge vit dans un effet (pas d'appel impur pendant le rendu) et se
@@ -144,6 +144,15 @@ export default function FicheBus({ bus, lignesInfo = {}, onFermer, onChoisirArre
             ))
           )}
         </div>
+
+        {onVoirLigne && (
+          <button
+            onClick={onVoirLigne}
+            className="shrink-0 border-t border-[var(--line)] py-2.5 text-[12.5px] font-semibold text-[var(--chrome-800)] active:opacity-70"
+          >
+            Voir tous les bus de la ligne {info.nom} →
+          </button>
+        )}
       </div>
     </div>
   );
