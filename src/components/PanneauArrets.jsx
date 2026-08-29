@@ -30,6 +30,7 @@ export default function PanneauArrets({
   ouvert,
   onFermer,
   arretsInfos,
+  arretsParLigne = {},
   lignesInfo,
   vehicules,
   position,
@@ -98,7 +99,25 @@ export default function PanneauArrets({
     [arretOuvert, vehicules]
   );
 
+  // Lignes qui desservent l'arrêt ouvert, d'après la desserte théorique — utile
+  // même quand aucun bus ne roule (nuit, dimanche) : les passages temps réel
+  // seuls laisseraient l'en-tête vide.
+  const lignesDesservies = useMemo(() => {
+    if (!arretOuvert) return [];
+    return Object.keys(arretsParLigne)
+      .filter((rid) => (arretsParLigne[rid] || []).includes(arretOuvert))
+      .sort((a, b) =>
+        (lignesInfo[a]?.nom || a).localeCompare(lignesInfo[b]?.nom || b, "fr", { numeric: true })
+      );
+  }, [arretOuvert, arretsParLigne, lignesInfo]);
+
   if (!ouvert) return null;
+
+  const detailInfos = arretOuvert ? arretsInfos[arretOuvert] : null;
+  const distanceDetail =
+    detailInfos && position && Number.isFinite(detailInfos.lat) && Number.isFinite(detailInfos.lon)
+      ? distanceMetres(position.lat, position.lon, detailInfos.lat, detailInfos.lon)
+      : null;
 
   const infoLigne = (routeId) =>
     lignesInfo[routeId] || { nom: routeId, couleur: "var(--chrome-800)" };
@@ -186,18 +205,25 @@ export default function PanneauArrets({
               >
                 ‹
               </button>
-              <h2 className="flex-1 min-w-0 truncate text-sm font-bold font-signage">
-                {arretsInfos[arretOuvert]?.nom || arretOuvert}
-                {arretsInfos[arretOuvert]?.pmr === true && (
-                  <span
-                    aria-label="Arrêt accessible UFR"
-                    title="Arrêt accessible UFR"
-                    className="ml-1.5 text-[12px] font-normal"
-                  >
-                    ♿
-                  </span>
+              <div className="flex-1 min-w-0">
+                <h2 className="truncate text-sm font-bold font-signage">
+                  {arretsInfos[arretOuvert]?.nom || arretOuvert}
+                  {arretsInfos[arretOuvert]?.pmr === true && (
+                    <span
+                      aria-label="Arrêt accessible UFR"
+                      title="Arrêt accessible UFR"
+                      className="ml-1.5 text-[12px] font-normal"
+                    >
+                      ♿
+                    </span>
+                  )}
+                </h2>
+                {distanceDetail !== null && (
+                  <div className="text-[11px] text-[var(--ink-muted)] tabular-nums leading-tight mt-0.5">
+                    {formaterDistance(distanceDetail)} · {formaterTempsMarche(distanceDetail)}
+                  </div>
                 )}
-              </h2>
+              </div>
               <EtoileFavori
                 actif={favoris.arrets.includes(arretOuvert)}
                 onToggle={() => basculerArret(arretOuvert)}
@@ -220,6 +246,16 @@ export default function PanneauArrets({
             </div>
 
             <div className="overflow-y-auto px-4 py-2">
+              {lignesDesservies.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap pb-2 mb-1 border-b border-[var(--line)]">
+                  <span className="text-[11px] font-bold uppercase tracking-wide text-[var(--ink-muted)] mr-0.5">
+                    Lignes
+                  </span>
+                  {lignesDesservies.map((rid) => (
+                    <Badge key={rid} info={infoLigne(rid)} />
+                  ))}
+                </div>
+              )}
               {messagePartage && (
                 <p className="text-[11.5px] text-[var(--ink-muted)] pb-1">{messagePartage}</p>
               )}

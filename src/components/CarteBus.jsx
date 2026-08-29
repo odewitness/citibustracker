@@ -1,12 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import L from "leaflet";
-import {
-  busFantome,
-  categorieRetard,
-  COULEUR_RETARD,
-  formaterRetard,
-  prochainsPassages,
-} from "../utils.js";
+import { busFantome, categorieRetard, COULEUR_RETARD } from "../utils.js";
 
 // Icône de bus : pastille colorée, numéro de ligne, flèche de cap si connue.
 // - direction : "0"/"1" → bordure pleine ou pointillée, pour distinguer les sens
@@ -78,34 +72,6 @@ function appliquerIcone(entree, etat) {
   );
 }
 
-// Construit le contenu du "tableau des prochains passages" pour un arrêt donné,
-// à partir des données de bus les plus récentes (calculé à l'ouverture du popup,
-// pas au moment où le marqueur a été créé, pour rester à jour).
-function construireContenuArret(nomArret, stopId, vehicules, lignesInfo) {
-  const passages = prochainsPassages(stopId, vehicules);
-
-  if (passages.length === 0) {
-    return `<div class="popup-bus"><b>${nomArret}</b><div style="margin-top:6px;color:#5B6B72;">Aucun bus prévu pour le moment</div></div>`;
-  }
-
-  const lignesHtml = passages
-    .slice(0, 5)
-    .map((p) => {
-      const info = lignesInfo[p.ligne] || { nom: p.ligne, couleur: "#0F2E3D" };
-      const dest = p.destination ? ` → ${p.destination}` : "";
-      const retard =
-        p.retard !== null && p.retard !== undefined ? ` · ${formaterRetard(p.retard)}` : "";
-      return `<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
-        <span style="background:${info.couleur};color:#fff;font-size:11px;font-weight:700;padding:2px 7px;border-radius:999px;">${info.nom}</span>
-        <span style="flex:1;font-size:12.5px;">${dest}${retard}</span>
-        <span style="font-weight:700;font-size:13px;">${p.eta} min</span>
-      </div>`;
-    })
-    .join("");
-
-  return `<div class="popup-bus"><b>${nomArret}</b>${lignesHtml}</div>`;
-}
-
 export default function CarteBus({
   vehicules,
   lignesInfo,
@@ -117,6 +83,7 @@ export default function CarteBus({
   mapApiRef,
   busSelectionneId = null,
   onChangerBusSelectionne,
+  onOuvrirArret,
 }) {
   const conteneurRef = useRef(null);
   const carteRef = useRef(null);
@@ -124,8 +91,6 @@ export default function CarteBus({
   const couchesReseauRef = useRef(null);
   const marqueurMoiRef = useRef(null);
   const premierChargementRef = useRef(true);
-  const vehiculesRef = useRef(vehicules);
-  const lignesInfoRef = useRef(lignesInfo);
   // Marqueurs de bus actuellement sur la carte, indexés par id de véhicule.
   // C'est la pièce maîtresse du rafraîchissement : on déplace et on met à jour
   // ces marqueurs plutôt que de vider la couche, car un clearLayers() détruirait
@@ -144,8 +109,12 @@ export default function CarteBus({
   useEffect(() => { onChangerRef.current = onChangerBusSelectionne; }, [onChangerBusSelectionne]);
   const selectionner = useCallback((valeur) => onChangerRef.current?.(valeur), []);
 
-  useEffect(() => { vehiculesRef.current = vehicules; }, [vehicules]);
-  useEffect(() => { lignesInfoRef.current = lignesInfo; }, [lignesInfo]);
+  // Idem pour l'ouverture de la fiche d'arrêt : le gestionnaire de clic des
+  // pastilles d'arrêt est posé au (re)dessin du réseau, il ne doit pas figer une
+  // version périmée de la prop.
+  const onOuvrirArretRef = useRef(onOuvrirArret);
+  useEffect(() => { onOuvrirArretRef.current = onOuvrirArret; }, [onOuvrirArret]);
+
   useEffect(() => { busSelectionneIdRef.current = busSelectionneId; }, [busSelectionneId]);
 
   // Ligne du bus sélectionné (pour atténuer les tracés des autres lignes aussi).
@@ -348,13 +317,17 @@ export default function CarteBus({
           fillOpacity: estLigneAttenuee ? 0.15 : 1,
         }).addTo(couche);
 
-        point.bindPopup("");
-        point.on("popupopen", () => {
-          point
-            .getPopup()
-            .setContent(
-              construireContenuArret(arret.nom, stopId, vehiculesRef.current, lignesInfoRef.current)
-            );
+        // Un tap sur une pastille d'arrêt ouvre la fiche d'arrêt complète
+        // (prochains passages temps réel, favori, partage, horaires théoriques,
+        // création d'alerte) plutôt qu'une bulle Leaflet réduite.
+        point.on("click", (e) => {
+          L.DomEvent.stopPropagation(e);
+          onOuvrirArretRef.current?.({
+            stopId,
+            nom: arret.nom,
+            lat: arret.lat,
+            lon: arret.lon,
+          });
         });
       });
     });

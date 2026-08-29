@@ -827,6 +827,10 @@ export default function App() {
         mapApiRef={mapApiRef}
         busSelectionneId={busSelectionneId}
         onChangerBusSelectionne={setBusSelectionneId}
+        onOuvrirArret={(arret) => {
+          setBusSelectionneId(null);
+          ouvrirFicheArret(arret);
+        }}
       />
 
       {ecran === "carte" && (
@@ -931,6 +935,7 @@ export default function App() {
           setArretCible(null);
         }}
         arretsInfos={reseau.arretsInfos}
+        arretsParLigne={reseau.arrets}
         lignesInfo={lignesInfo}
         vehicules={donnees.vehicules}
         position={positionUtilisateur}
