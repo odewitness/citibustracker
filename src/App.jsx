@@ -90,6 +90,16 @@ export default function App() {
     busSelectionneIdRef.current = busSelectionneId;
   }, [busSelectionneId]);
 
+  // Suivi caméra : bus qu'un appui long a verrouillé au centre de l'écran, et
+  // indicateur « l'utilisateur a repris la main » (zoom / panoramique) qui fait
+  // apparaître le bouton « Recentrer ».
+  const [busVerrouilleId, setBusVerrouilleId] = useState(null);
+  const [suiviDecale, setSuiviDecale] = useState(false);
+  const busVerrouilleIdRef = useRef(busVerrouilleId);
+  useEffect(() => {
+    busVerrouilleIdRef.current = busVerrouilleId;
+  }, [busVerrouilleId]);
+
   // Fiche « ligne en direct » : { routeId, sens } ou null.
   const [ligneDetail, setLigneDetail] = useState(null);
 
@@ -198,6 +208,20 @@ export default function App() {
         ) {
           setBusSelectionneId(null);
           afficherMessage("Ce bus a terminé sa course");
+        }
+
+        // Idem pour le bus suivi par la caméra : on relâche le verrou plutôt que
+        // de voir la carte figée sur une position périmée.
+        const verrId = busVerrouilleIdRef.current;
+        if (
+          verrId &&
+          Array.isArray(data.vehicules) &&
+          data.vehicules.length > 0 &&
+          !data.vehicules.some((v) => v.id === verrId)
+        ) {
+          setBusVerrouilleId(null);
+          setSuiviDecale(false);
+          if (verrId !== selId) afficherMessage("Le bus suivi a terminé sa course");
         }
 
         if (!lignesInitialiseesRef.current && data.lignes) {
@@ -920,6 +944,19 @@ export default function App() {
     ? donnees.vehicules.find((v) => v.id === busSelectionneId) || null
     : null;
 
+  // Appui long sur un bus → la carte le garde centré. Un second appui long sur
+  // un autre bus déplace le verrou ; le bouton « Suivi » (ou un tap sur le fond
+  // de carte) l'enlève.
+  function verrouillerSuiviBus(id) {
+    setBusVerrouilleId(id);
+    setSuiviDecale(false);
+    afficherMessage("Suivi activé — le bus reste centré à l'écran");
+  }
+  function arreterSuiviBus() {
+    setBusVerrouilleId(null);
+    setSuiviDecale(false);
+  }
+
   const feuilleOuverte =
     panneauArretsOuvert ||
     panneauOuvert ||
@@ -973,6 +1010,10 @@ export default function App() {
           setBusSelectionneId(null);
           ouvrirFicheArret(arret);
         }}
+        busVerrouilleId={busVerrouilleId}
+        suiviDecale={suiviDecale}
+        onVerrouillerBus={verrouillerSuiviBus}
+        onSuiviDecale={() => setSuiviDecale(true)}
       />
 
       {ecran === "carte" && (
@@ -1204,6 +1245,23 @@ export default function App() {
           style={{ bottom: hauteurBouton(0) }}
         >
           ◉
+        </button>
+      )}
+
+      {ecran === "carte" && busVerrouilleId && (
+        <button
+          onClick={() => (suiviDecale ? setSuiviDecale(false) : arreterSuiviBus())}
+          aria-label={suiviDecale ? "Recentrer sur le bus suivi" : "Arrêter le suivi du bus"}
+          className={
+            (feuilleOuverte ? "hidden " : "") +
+            "fixed left-3.5 z-[1050] h-12 px-4 rounded-full shadow-lg flex items-center gap-1.5 text-sm font-semibold leading-none active:scale-95 transition-[bottom] " +
+            (suiviDecale
+              ? "bg-[var(--amber-500)] text-[var(--chrome-950)]"
+              : "bg-[var(--chrome-950)] text-white")
+          }
+          style={{ bottom: hauteurBouton(0) }}
+        >
+          {suiviDecale ? "⟳ Recentrer" : "🎯 Suivi"}
         </button>
       )}
 

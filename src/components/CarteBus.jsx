@@ -5,21 +5,23 @@ import { busFantome, categorieRetard, COULEUR_RETARD } from "../utils.js";
 // Icône de bus : pastille colorée, numéro de ligne, flèche de cap si connue.
 // - direction : "0"/"1" → bordure pleine ou pointillée, pour distinguer les sens
 //   d'un coup d'œil sans avoir à sélectionner un bus.
-// - etat : "normal" | "selectionne" | "attenue" → mis en évidence / estompé
-//   quand l'utilisateur a tapé sur un bus précis pour le suivre parmi d'autres
-//   de la même ligne.
+// - etat : "normal" | "selectionne" | "attenue" | "suivi" → mis en évidence /
+//   estompé quand l'utilisateur a tapé sur un bus précis pour le suivre parmi
+//   d'autres de la même ligne ; "suivi" = suivi caméra armé par un appui long.
 function creerIconeBus(couleur, texte, cap, direction, etat, retardCat = "inconnu", fantome = false) {
   const taille = etat === "selectionne" ? 38 : 30;
   const bordure = String(direction) === "1" ? "3px dashed #fff" : "2px solid #fff";
   // Anneau de ponctualité (vert à l'heure, ambre / rouge en retard, bleu en
-  // avance) — sauf sur le bus sélectionné, dont l'anneau ambre prime.
+  // avance) — sauf sur le bus sélectionné ou suivi, dont l'anneau ambre prime.
   const couleurAnneau = COULEUR_RETARD[retardCat];
   const anneau =
     etat === "selectionne"
       ? "box-shadow:0 0 0 3px var(--amber-500), 0 2px 10px rgba(0,0,0,.45);"
-      : retardCat !== "inconnu" && !fantome
-        ? `box-shadow:0 0 0 2px ${couleurAnneau}, 0 2px 6px rgba(0,0,0,.35);`
-        : "box-shadow:0 2px 6px rgba(0,0,0,.35);";
+      : etat === "suivi"
+        ? "box-shadow:0 0 0 3px var(--amber-500), 0 2px 8px rgba(0,0,0,.4);"
+        : retardCat !== "inconnu" && !fantome
+          ? `box-shadow:0 0 0 2px ${couleurAnneau}, 0 2px 6px rgba(0,0,0,.35);`
+          : "box-shadow:0 2px 6px rgba(0,0,0,.35);";
   // Bus « fantôme » (position figée) : nettement estompé et désaturé pour ne pas
   // le confondre avec un bus qui roule.
   const opacite = fantome ? 0.35 : etat === "attenue" ? 0.25 : 1;
@@ -84,6 +86,10 @@ export default function CarteBus({
   busSelectionneId = null,
   onChangerBusSelectionne,
   onOuvrirArret,
+  busVerrouilleId = null,
+  suiviDecale = false,
+  onVerrouillerBus,
+  onSuiviDecale,
 }) {
   const conteneurRef = useRef(null);
   const carteRef = useRef(null);
@@ -116,6 +122,44 @@ export default function CarteBus({
   useEffect(() => { onOuvrirArretRef.current = onOuvrirArret; }, [onOuvrirArret]);
 
   useEffect(() => { busSelectionneIdRef.current = busSelectionneId; }, [busSelectionneId]);
+
+  // --- Suivi caméra d'un bus (appui long) ---
+  // busVerrouilleId : bus que la carte garde centré à chaque relevé.
+  // suiviDecale : l'utilisateur a repris la main (zoom / panoramique) → on gèle
+  //   le recentrage jusqu'à ce qu'il appuie sur « Recentrer » (piloté par App).
+  const busVerrouilleIdRef = useRef(busVerrouilleId);
+  useEffect(() => { busVerrouilleIdRef.current = busVerrouilleId; }, [busVerrouilleId]);
+  const suiviDecaleRef = useRef(suiviDecale);
+  useEffect(() => { suiviDecaleRef.current = suiviDecale; }, [suiviDecale]);
+  const onVerrouillerBusRef = useRef(onVerrouillerBus);
+  useEffect(() => { onVerrouillerBusRef.current = onVerrouillerBus; }, [onVerrouillerBus]);
+  const onSuiviDecaleRef = useRef(onSuiviDecale);
+  useEffect(() => { onSuiviDecaleRef.current = onSuiviDecale; }, [onSuiviDecale]);
+  // Verrou anti-boucle : un recadrage déclenché par notre code ne doit pas être
+  // pris pour un geste utilisateur (sinon le suivi se mettrait en pause tout
+  // seul au premier relevé).
+  const mouvementProgrammatiqueRef = useRef(false);
+  const minuteurMouvementRef = useRef(null);
+  const dernierVerrouRef = useRef(null);
+  const decalePrecedentRef = useRef(suiviDecale);
+
+  const bougerProgrammatiquement = useCallback((fn) => {
+    mouvementProgrammatiqueRef.current = true;
+    clearTimeout(minuteurMouvementRef.current);
+    fn();
+    minuteurMouvementRef.current = setTimeout(() => {
+      mouvementProgrammatiqueRef.current = false;
+    }, 700);
+  }, []);
+
+  // État visuel d'un marqueur : sélection (fiche) > suivi caméra > atténué.
+  const etatMarqueur = useCallback((busId) => {
+    const sel = busSelectionneIdRef.current;
+    if (sel === busId) return "selectionne";
+    if (busVerrouilleIdRef.current === busId) return "suivi";
+    if (sel) return "attenue";
+    return "normal";
+  }, []);
 
   // Ligne du bus sélectionné (pour atténuer les tracés des autres lignes aussi).
   // Calculé à chaque rendu (peu coûteux) mais utilisé comme dépendance d'effet
@@ -150,20 +194,35 @@ export default function CarteBus({
     // clics-là) désélectionne le bus actuellement isolé.
     carte.on("click", () => selectionner(null));
 
-    // On expose quelques méthodes utiles au composant parent (recentrage, suivi)
+    // Pendant un suivi caméra, tout geste manuel de recadrage (glissement ou
+    // zoom) met le suivi en pause et fait apparaître le bouton « Recentrer ».
+    // On ignore les recadrages que le suivi lui-même déclenche.
+    function surGesteManuel() {
+      if (!busVerrouilleIdRef.current || suiviDecaleRef.current) return;
+      if (mouvementProgrammatiqueRef.current) return;
+      onSuiviDecaleRef.current?.();
+    }
+    carte.on("dragstart", surGesteManuel);
+    carte.on("zoomstart", surGesteManuel);
+
+    // On expose quelques méthodes utiles au composant parent (recentrage, suivi).
+    // Chaque recadrage passe par bougerProgrammatiquement() pour ne pas être pris
+    // pour un geste utilisateur mettant le suivi caméra en pause.
     if (mapApiRef) {
       mapApiRef.current = {
         centrerSur(lat, lon, zoomMin) {
           const zoom = zoomMin ? Math.max(carte.getZoom(), zoomMin) : carte.getZoom();
-          carte.setView([lat, lon], zoom);
+          bougerProgrammatiquement(() => carte.setView([lat, lon], zoom));
         },
         suivre(lat, lon) {
-          carte.panTo([lat, lon], { animate: true });
-          if (carte.getZoom() < 15) carte.setZoom(15);
+          bougerProgrammatiquement(() => {
+            carte.panTo([lat, lon], { animate: true });
+            if (carte.getZoom() < 15) carte.setZoom(15);
+          });
         },
         ajusterSur(points) {
           if (!Array.isArray(points) || points.length === 0) return;
-          carte.fitBounds(points, { maxZoom: 15, padding: [50, 50] });
+          bougerProgrammatiquement(() => carte.fitBounds(points, { maxZoom: 15, padding: [50, 50] }));
         },
         afficherPositionUtilisateur(lat, lon) {
           if (marqueurMoiRef.current) carte.removeLayer(marqueurMoiRef.current);
@@ -192,7 +251,6 @@ export default function CarteBus({
     const couche = couchesBusRef.current;
     if (!couche) return;
 
-    const selectionActuelle = busSelectionneIdRef.current;
     const bounds = [];
     const vus = new Set();
 
@@ -208,10 +266,7 @@ export default function CarteBus({
       vus.add(bus.id);
       bounds.push([bus.lat, bus.lon]);
 
-      let etat = "normal";
-      if (selectionActuelle) {
-        etat = bus.id === selectionActuelle ? "selectionne" : "attenue";
-      }
+      const etat = etatMarqueur(bus.id);
 
       const existant = marqueursRef.current.get(bus.id);
       if (existant) {
@@ -236,10 +291,44 @@ export default function CarteBus({
           busFantome(bus)
         ),
       });
+      // Appui long (~500 ms) sans glisser : arme / change le suivi caméra du
+      // bus. Un simple tap garde son rôle (sélection + fiche « trajet complet »).
+      // On écoute l'élément DOM du marqueur : L.DivIcon.createIcon() le réutilise
+      // d'un setIcon() à l'autre, les écouteurs survivent donc aux relevés.
+      let minuteurAppui = null;
+      let appuiLongArme = false;
+      const annulerAppui = () => {
+        clearTimeout(minuteurAppui);
+        carteRef.current?.off("movestart", annulerAppui);
+      };
+      const demarrerAppui = () => {
+        appuiLongArme = false;
+        clearTimeout(minuteurAppui);
+        carteRef.current?.on("movestart", annulerAppui);
+        minuteurAppui = setTimeout(() => {
+          appuiLongArme = true;
+          carteRef.current?.off("movestart", annulerAppui);
+          if (navigator.vibrate) navigator.vibrate(30);
+          onVerrouillerBusRef.current?.(bus.id);
+        }, 500);
+      };
       marker.on("click", () => {
+        // Le clic qui suit un appui long ne doit pas re-basculer la sélection.
+        if (appuiLongArme) {
+          appuiLongArme = false;
+          return;
+        }
         selectionner(busSelectionneIdRef.current === bus.id ? null : bus.id);
       });
       couche.addLayer(marker);
+      // getElement() n'existe qu'une fois le marqueur ajouté à la carte.
+      const el = marker.getElement();
+      if (el) {
+        el.addEventListener("pointerdown", demarrerAppui);
+        el.addEventListener("pointerup", annulerAppui);
+        el.addEventListener("pointercancel", annulerAppui);
+        el.addEventListener("pointerleave", annulerAppui);
+      }
       marqueursRef.current.set(bus.id, {
         marker,
         bus,
@@ -259,20 +348,49 @@ export default function CarteBus({
       carteRef.current.fitBounds(bounds, { maxZoom: 15, padding: [40, 100] });
       premierChargementRef.current = false;
     }
-  }, [vehicules, lignesInfo, lignesActives, direction, selectionner]);
+  }, [vehicules, lignesInfo, lignesActives, direction, selectionner, etatMarqueur]);
 
-  // Met à jour l'icône des marqueurs déjà présents quand la sélection change
-  // (clic sur un bus / désélection), sans toucher à la couche ni aux popups :
-  // c'est ce qui permet au popup du bus cliqué de rester ouvert.
+  // Met à jour l'icône des marqueurs déjà présents quand la sélection ou le
+  // suivi caméra change, sans toucher à la couche ni aux popups : c'est ce qui
+  // permet au popup du bus cliqué de rester ouvert.
   useEffect(() => {
     marqueursRef.current.forEach((entree) => {
-      let etat = "normal";
-      if (busSelectionneId) {
-        etat = entree.bus.id === busSelectionneId ? "selectionne" : "attenue";
-      }
-      appliquerIcone(entree, etat);
+      appliquerIcone(entree, etatMarqueur(entree.bus.id));
     });
-  }, [busSelectionneId]);
+  }, [busSelectionneId, busVerrouilleId, etatMarqueur]);
+
+  // Suivi caméra : garde le bus verrouillé centré à chaque relevé, tant que
+  // l'utilisateur n'a pas repris la main. Premier cadrage (ou reprise après
+  // « Recentrer ») : setView, avec un zoom minimal utile. Relevés suivants :
+  // simple panoramique fluide, sans toucher au zoom choisi par l'utilisateur.
+  useEffect(() => {
+    const carte = carteRef.current;
+    const cible = busVerrouilleId
+      ? vehicules.find((v) => v.id === busVerrouilleId) || null
+      : null;
+    const pos =
+      cible && Number.isFinite(cible.lat) && Number.isFinite(cible.lon) ? cible : null;
+
+    const reprise = decalePrecedentRef.current && !suiviDecale;
+    decalePrecedentRef.current = suiviDecale;
+
+    if (!busVerrouilleId) {
+      dernierVerrouRef.current = null;
+      return;
+    }
+    if (!carte || !pos || suiviDecale) return;
+
+    const premierCadrage = dernierVerrouRef.current !== busVerrouilleId;
+    dernierVerrouRef.current = busVerrouilleId;
+
+    bougerProgrammatiquement(() => {
+      if (premierCadrage || reprise) {
+        carte.setView([pos.lat, pos.lon], Math.max(carte.getZoom(), 15), { animate: true });
+      } else {
+        carte.panTo([pos.lat, pos.lon], { animate: true });
+      }
+    });
+  }, [vehicules, busVerrouilleId, suiviDecale, bougerProgrammatiquement]);
 
   // Redessine les tracés de lignes + arrêts cliquables — quand la sélection de
   // lignes change, ou quand la ligne du bus mis en avant change (mais PAS à

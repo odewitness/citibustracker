@@ -19,6 +19,10 @@ Netlify, données issues des flux GTFS et GTFS-RT du réseau.
   se rafraîchit dès le retour de veille.
 - **Fiche « trajet complet »** : toucher un bus ouvre sa frise d'arrêts à venir
   avec heure prévue, retard et temps restant arrêt par arrêt.
+- **Suivi caméra** : un **appui long** sur un bus le garde centré à l'écran à
+  chaque relevé. Dès qu'on zoome ou déplace la carte à la main, le suivi se met
+  en pause et un bouton **« Recentrer »** apparaît ; le bouton **« Suivi »**
+  (ou l'appui long sur un autre bus) relâche le verrou.
 - **« Ligne N en direct »** : tous les véhicules d'une ligne d'un coup d'œil,
   dans l'ordre du trajet, avec retard, état de position, affluence et repérage
   des **paquets** (bus collés). Bande de santé (bus en service, retard médian,
@@ -67,7 +71,9 @@ Le site de production se déploie automatiquement depuis la branche `main`.
   `PanneauFavoris`, `PanneauLigne`, `BandeauAlertes`, `BandeauSuivi`,
   `HorairesTheoriques`, `FicheBus`) sont purement présentationnels. La carte
   reste montée en fond ; le tableau de bord la recouvre. La sélection d'un bus
-  est pilotée par `App` (`busSelectionneId`) et alimente `FicheBus`.
+  est pilotée par `App` (`busSelectionneId`) et alimente `FicheBus`. Le suivi
+  caméra (`busVerrouilleId` + `suiviDecale`, `App`) est armé par un appui long :
+  `CarteBus` recentre à chaque relevé et signale tout geste manuel de recadrage.
 - `src/favoris.js` / `src/alertes.js` — état local partagé (favoris, alertes
   programmées) exposé via des hooks avec un mini-bus d'événements.
 - `netlify/functions/bus-data.js` — flux temps réel, appelé toutes les 15 s.
