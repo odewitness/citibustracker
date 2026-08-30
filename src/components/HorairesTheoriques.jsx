@@ -106,6 +106,16 @@ export default function HorairesTheoriques({ stopId, lignesInfo = {}, max = Infi
     );
   }
 
+  // Vue complète (panneau arrêt) : on fait défiler toute la journée. Vue réduite
+  // (tableau de bord, max fini) : liste courte, pas de conteneur à hauteur fixe.
+  const defile = max === Infinity;
+  const classeListe = defile
+    ? "flex flex-col max-h-[38vh] overflow-y-auto overscroll-contain -mr-1 pr-1"
+    : "flex flex-col";
+  const lignePmr = etat.pmrArret === true && (
+    <p className="text-[11px] text-[var(--ink-muted)] py-1">♿ Arrêt accessible UFR</p>
+  );
+
   if (etat.passages.length === 0) {
     // Repli : plus aucune course ce soir, mais on connaît les premiers départs
     // du lendemain.
@@ -115,12 +125,12 @@ export default function HorairesTheoriques({ stopId, lignesInfo = {}, max = Infi
           <p className="text-[11px] text-[var(--ink-muted)] py-1 first-letter:uppercase">
             Plus de bus ce soir — reprise {libelleJour(etat.dateLendemain)}
           </p>
-          {etat.pmrArret === true && (
-            <p className="text-[11px] text-[var(--ink-muted)] py-1">♿ Arrêt accessible UFR</p>
-          )}
-          {etat.passagesLendemain.slice(0, max).map((p, i) => (
-            <LignePassage key={i} p={p} lignesInfo={lignesInfo} lendemain />
-          ))}
+          {lignePmr}
+          <div className={classeListe}>
+            {etat.passagesLendemain.slice(0, max).map((p, i) => (
+              <LignePassage key={i} p={p} lignesInfo={lignesInfo} lendemain />
+            ))}
+          </div>
         </div>
       );
     }
@@ -133,12 +143,12 @@ export default function HorairesTheoriques({ stopId, lignesInfo = {}, max = Infi
 
   return (
     <div className="flex flex-col">
-      {etat.pmrArret === true && (
-        <p className="text-[11px] text-[var(--ink-muted)] py-1">♿ Arrêt accessible UFR</p>
-      )}
-      {etat.passages.slice(0, max).map((p, i) => (
-        <LignePassage key={i} p={p} lignesInfo={lignesInfo} />
-      ))}
+      {lignePmr}
+      <div className={classeListe}>
+        {etat.passages.slice(0, max).map((p, i) => (
+          <LignePassage key={i} p={p} lignesInfo={lignesInfo} />
+        ))}
+      </div>
     </div>
   );
 }

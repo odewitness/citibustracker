@@ -6,9 +6,12 @@ const { maintenantParis, dateDecalee, formaterHM } = require("./_lib/temps-paris
 // aucun bus ne circule (aube, soirée, dimanche).
 //
 // Appel : /.netlify/functions/horaires-arret?arret=<stop_id>[&fenetre=<minutes>]
+//
+// Par défaut on renvoie tous les passages restants de la journée d'exploitation
+// (le client les fait défiler) ; `fenetre` permet de restreindre à N minutes.
 
-const FENETRE_DEFAUT = 120; // minutes
-const NB_MAX = 12;
+const FENETRE_DEFAUT = 24 * 60; // minutes : reste de la journée
+const NB_MAX = 200; // garde-fou, pas une troncature attendue
 const NB_LENDEMAIN = 8; // premiers départs du lendemain servis en repli
 
 function reponse(code, corps, maxAge = 0) {
