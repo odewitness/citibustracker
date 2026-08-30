@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { versSecondes, servicesActifs } from "../netlify/functions/_lib/gtfs-statique.js";
-import { derniersPassages } from "../netlify/functions/horaires-arret.js";
+import { derniersPassages, passagesLendemain } from "../netlify/functions/horaires-arret.js";
 
 describe("versSecondes", () => {
   it("convertit une heure GTFS en secondes depuis minuit", () => {
@@ -79,5 +79,45 @@ describe("derniersPassages", () => {
   it("ignore les lignes dont le service n'est pas actif", () => {
     const set = derniersPassages(passages, aujourdhui, veille);
     expect([...set].some((k) => k.startsWith("3|"))).toBe(false);
+  });
+});
+
+describe("passagesLendemain", () => {
+  const lignes = { 1: { nom: "1", couleur: "#f00" }, 2: { nom: "2", couleur: "#0f0" } };
+  const demain = new Set(["SEM"]);
+
+  const passages = [
+    { sec: 6 * 3600 + 20 * 60, routeId: "1", directionId: "0", serviceId: "SEM", headsign: "Centre", pmr: true },
+    { sec: 5 * 3600 + 45 * 60, routeId: "2", directionId: "1", serviceId: "SEM", headsign: "Gare", pmr: null },
+    { sec: 7 * 3600, routeId: "1", directionId: "0", serviceId: "DIM", headsign: "Centre", pmr: null }, // service inactif demain
+    { sec: 24 * 3600 + 30 * 60, routeId: "1", directionId: "0", serviceId: "SEM", headsign: "Centre", pmr: null }, // course après minuit → exclue
+  ];
+
+  it("retient les courses de jour des services actifs demain, triées par heure", () => {
+    const r = passagesLendemain(passages, demain, lignes);
+    expect(r.map((p) => p.heure)).toEqual(["05:45", "06:20"]);
+    expect(r[0]).toMatchObject({ ligne: "2", destination: "Gare", direction: "1" });
+    expect(r[1]).toMatchObject({ ligne: "1", pmr: true });
+  });
+
+  it("exclut les courses après minuit (sec ≥ 24h)", () => {
+    const r = passagesLendemain(passages, demain, lignes);
+    expect(r.some((p) => p.heure === "00:30")).toBe(false);
+  });
+
+  it("tronque à nb passages", () => {
+    const beaucoup = Array.from({ length: 20 }, (_, i) => ({
+      sec: (6 * 3600) + i * 600,
+      routeId: "1",
+      directionId: "0",
+      serviceId: "SEM",
+      headsign: "Centre",
+      pmr: null,
+    }));
+    expect(passagesLendemain(beaucoup, demain, lignes, 5)).toHaveLength(5);
+  });
+
+  it("renvoie [] si aucun service actif demain", () => {
+    expect(passagesLendemain(passages, new Set(), lignes)).toEqual([]);
   });
 });

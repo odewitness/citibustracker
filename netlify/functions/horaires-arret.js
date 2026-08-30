@@ -9,6 +9,7 @@ const { maintenantParis, dateDecalee, formaterHM } = require("./_lib/temps-paris
 
 const FENETRE_DEFAUT = 120; // minutes
 const NB_MAX = 12;
+const NB_LENDEMAIN = 8; // premiers départs du lendemain servis en repli
 
 function reponse(code, corps, maxAge = 0) {
   return {
@@ -40,6 +41,32 @@ function derniersPassages(passagesArret, servicesAujourdhui, servicesVeille) {
   return derniers;
 }
 
+// Premiers passages du lendemain à cet arrêt : sert de repli quand plus aucune
+// course n'est prévue pour le reste de la journée (fin de soirée, dimanche sans
+// service). On ne retient que les courses « de jour » (sec < 24h) des services
+// actifs demain ; une course après minuit (sec ≥ 24h) appartiendrait à la nuit
+// du lendemain au surlendemain, hors sujet ici. Trié par heure, tronqué à nb.
+function passagesLendemain(passagesArret, servicesLendemain, lignes, nb = NB_LENDEMAIN) {
+  const futurs = [];
+  for (const p of passagesArret) {
+    if (p.sec >= 86400) continue;
+    if (!servicesLendemain.has(p.serviceId)) continue;
+    const info = lignes[p.routeId] || {};
+    futurs.push({
+      routeId: p.routeId,
+      ligne: info.nom || p.routeId,
+      couleur: info.couleur || null,
+      direction: p.directionId,
+      destination: p.headsign || null,
+      heure: formaterHM(p.sec),
+      heure_sec: p.sec,
+      pmr: p.pmr ?? null,
+    });
+  }
+  futurs.sort((a, b) => a.heure_sec - b.heure_sec);
+  return futurs.slice(0, nb);
+}
+
 exports.handler = async function (event) {
   try {
     const stopId = event.queryStringParameters && event.queryStringParameters.arret;
@@ -62,6 +89,10 @@ exports.handler = async function (event) {
     const derniers = derniersPassages(passagesArret, servicesAujourdhui, servicesVeille);
 
     const resultats = [];
+    // Plus grand écart parmi les courses du jour encore à venir : sert à
+    // distinguer « rien avant longtemps mais il reste des bus ce soir » (fenêtre
+    // trop courte) de « vraiment plus rien aujourd'hui » (repli sur le lendemain).
+    let maxDeltaJour = -Infinity;
     for (const p of passagesArret) {
       let delta;
       if (p.sec >= 86400) {
@@ -71,6 +102,7 @@ exports.handler = async function (event) {
         if (!servicesAujourdhui.has(p.serviceId)) continue;
         delta = p.sec - secondeDuJour;
       }
+      if (delta > maxDeltaJour) maxDeltaJour = delta;
       if (delta < -60 || delta > fenetreSec) continue;
 
       const info = lignes[p.routeId] || {};
@@ -89,6 +121,17 @@ exports.handler = async function (event) {
     }
     resultats.sort((a, b) => a.dans - b.dans);
 
+    // Repli : plus aucune course aujourd'hui (tout est passé, ou l'arrêt n'est
+    // pas desservi ce jour) → on annonce les premiers départs du lendemain.
+    let repliLendemain = [];
+    let dateLendemain = null;
+    if (resultats.length === 0 && maxDeltaJour <= 60) {
+      const demain = dateDecalee(dateYYYYMMDD, 1);
+      const servicesDemain = servicesActifs(horaires, demain.date, demain.jour);
+      repliLendemain = passagesLendemain(passagesArret, servicesDemain, lignes);
+      if (repliLendemain.length > 0) dateLendemain = demain.date;
+    }
+
     return reponse(
       200,
       {
@@ -97,6 +140,8 @@ exports.handler = async function (event) {
         pmr_arret: (arretsPosition[stopId] || {}).pmr ?? null,
         date: dateYYYYMMDD,
         passages: resultats.slice(0, NB_MAX),
+        passages_lendemain: repliLendemain,
+        date_lendemain: dateLendemain,
       },
       60
     );
@@ -107,3 +152,4 @@ exports.handler = async function (event) {
 
 // Exposé pour les tests unitaires.
 exports.derniersPassages = derniersPassages;
+exports.passagesLendemain = passagesLendemain;
