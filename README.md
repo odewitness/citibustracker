@@ -95,7 +95,11 @@ Le site de production se déploie automatiquement depuis la branche `main`.
   l'archive GTFS, en trois étages : `chargerBase()` (léger, pour le temps réel),
   `chargerReseau()` (tracés et dessertes) et `chargerHoraires()` (heures de
   passage + calendrier + départs par ligne, le plus lourd — réservé aux
-  fonctions `horaires-*`). Chargements dédupliqués (`unefois`).
+  fonctions `horaires-*`). Chargements dédupliqués et mis en cache mémoire, avec
+  une durée de vie de 30 min : passé ce délai l'archive est revérifiée en tâche
+  de fond (requête conditionnelle `If-None-Match`) et les caches dérivés sont
+  reconstruits dès qu'une nouvelle offre est publiée, sans attendre un
+  redéploiement.
 - `netlify/functions/_lib/temps-paris.js` — helpers de date ancrés sur
   Europe/Paris, partagés par les fonctions `horaires-*`.
 

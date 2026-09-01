@@ -4,41 +4,111 @@ const AdmZip = require("adm-zip");
 const GTFS_STATIQUE_URL =
   "https://s3.eu-west-1.amazonaws.com/files.orchestra.ratpdev.com/networks/narbonne/exports/scolaires-sans-tad.zip";
 
-// Caches en mémoire, partagés par toutes les fonctions qui importent ce module
-// tant que l'instance reste « chaude » entre deux appels.
+// Cache mémoire partagé par toutes les fonctions qui importent ce module, tant
+// que l'instance Netlify reste « chaude » entre deux appels.
 //
-// Le parsing est découpé en deux : bus-data.js n'a besoin que des noms d'arrêts,
-// des lignes et des destinations (stops/routes/trips), alors que shapes.txt et
-// stop_times.txt — de loin les plus gros fichiers de l'archive — ne servent qu'au
-// tracé du réseau. Les parser dans bus-data revenait à payer plusieurs secondes
-// de démarrage à froid sur un appel répété toutes les 15 secondes.
-let cacheZip = null;
-let cacheBase = null;
-let cacheReseau = null;
-let cacheHoraires = null;
+// Le parsing est découpé en trois étages : bus-data.js n'a besoin que des noms
+// d'arrêts, des lignes et des destinations (chargerBase, sur stops/routes/trips),
+// alors que shapes.txt et stop_times.txt — de loin les plus gros fichiers de
+// l'archive — ne servent qu'au tracé du réseau (chargerReseau) et aux horaires
+// théoriques (chargerHoraires). Les parser dans bus-data revenait à payer
+// plusieurs secondes de démarrage à froid sur un appel répété toutes les 15 s.
+//
+// Durée de vie : l'archive GTFS distante est la seule source de vérité, tout le
+// reste en est une fonction pure. Passé TTL_ARCHIVE_MS, le prochain appel renvoie
+// immédiatement le cache courant ET déclenche en tâche de fond une revérification
+// de l'archive (requête conditionnelle : pas de retéléchargement si l'offre n'a
+// pas bougé). Chaque cache dérivé est estampillé du numéro de version de
+// l'archive qui l'a produit ; dès qu'une nouvelle archive arrive, il est
+// reconstruit au prochain accès. Sans ça, une fonction appelée en continu
+// (bus-data) restait indéfiniment sur l'offre chargée à son démarrage : au
+// changement d'offre (rentrée, trimestre), les horaires théoriques se
+// rafraîchissaient — cold start fréquent de horaires-* — mais pas le temps réel.
+const TTL_ARCHIVE_MS = 30 * 60 * 1000;
 
-// Chargements en cours : la fonction horaires-arret est appelée en rafale par le
-// tableau de bord (un arrêt = un appel) dès qu'aucun bus ne circule. Sur une
-// instance encore froide, sans cette déduplication, chaque appel re-téléchargeait
-// et re-parsait l'archive en parallèle. On mémorise la promesse le temps du
-// premier chargement ; en cas d'échec on la relâche pour permettre un nouvel essai.
-let promesseZip = null;
+let cacheZip = null; // instance AdmZip courante
+let zipVersion = 0; // incrémentée à chaque archive réellement nouvelle
+let zipVerifieLe = 0; // Date.now() de la dernière vérification réussie (200 ou 304)
+let zipLastModified = null; // en-têtes de l'archive en cache, pour la requête conditionnelle
+let zipEtag = null;
+let rafraichissementEnCours = false; // une seule revérification de fond à la fois
+
+let cacheBase = null;
+let cacheBaseVersion = -1;
+let cacheReseau = null;
+let cacheReseauVersion = -1;
+let cacheHoraires = null;
+let cacheHorairesVersion = -1;
+
+// Chargements en cours : horaires-arret est appelée en rafale par le tableau de
+// bord (un arrêt = un appel) dès qu'aucun bus ne circule. Sur une instance
+// froide, sans déduplication, chaque appel re-téléchargeait et re-parsait
+// l'archive en parallèle. On mémorise la promesse le temps du chargement ; en
+// cas d'échec on la relâche pour permettre un nouvel essai.
+let promesseZipInitial = null;
 let promesseBase = null;
 let promesseReseau = null;
 let promesseHoraires = null;
 
-function unefois(getCache, getPromesse, setPromesse, fabrique) {
-  const cache = getCache();
-  if (cache) return Promise.resolve(cache);
-  let p = getPromesse();
-  if (!p) {
-    p = fabrique().catch((e) => {
-      setPromesse(null);
-      throw e;
-    });
-    setPromesse(p);
+// --- Archive distante : téléchargement, cache, revérification périodique. ---
+
+// Télécharge l'archive. `entetes` porte une requête conditionnelle lors des
+// revérifications ; un 304 renvoie { inchange: true } sans corps.
+async function telechargerArchive(entetes) {
+  const resp = await fetch(GTFS_STATIQUE_URL, entetes ? { headers: entetes } : undefined);
+  if (resp.status === 304) return { inchange: true };
+  if (!resp.ok) {
+    throw new Error("Téléchargement GTFS statique échoué : " + resp.status);
   }
-  return p;
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  return {
+    zip: new AdmZip(buffer),
+    lastModified: resp.headers.get("last-modified"),
+    etag: resp.headers.get("etag"),
+  };
+}
+
+// Installe une archive fraîchement téléchargée. Si ses en-têtes de version sont
+// identiques à celles en cache (S3 a répondu 200 en ignorant la requête
+// conditionnelle), le contenu est le même : on ne touche pas à zipVersion, ce qui
+// évite de reconstruire pour rien les caches dérivés.
+function installerArchive(res) {
+  if (!res || !res.zip) return;
+  const memeVersion = cacheZip
+    ? res.etag
+      ? res.etag === zipEtag
+      : !!res.lastModified && res.lastModified === zipLastModified
+    : false;
+  if (memeVersion) return;
+  cacheZip = res.zip;
+  zipVersion++;
+  zipLastModified = res.lastModified;
+  zipEtag = res.etag;
+}
+
+// Revérifie l'archive en tâche de fond (non bloquant). Un 304 ou un contenu
+// inchangé repousse simplement la prochaine vérification ; un échec laisse le
+// cache en place et sera réessayé au prochain appel (zipVerifieLe non avancé).
+async function rafraichirArchive() {
+  rafraichissementEnCours = true;
+  try {
+    const entetes = {};
+    if (zipEtag) entetes["If-None-Match"] = zipEtag;
+    else if (zipLastModified) entetes["If-Modified-Since"] = zipLastModified;
+    const res = await telechargerArchive(entetes);
+    if (!res.inchange) installerArchive(res);
+    zipVerifieLe = Date.now();
+  } catch (e) {
+    /* réseau indisponible ou 5xx : on garde l'archive courante */
+  } finally {
+    rafraichissementEnCours = false;
+  }
+}
+
+function reverifierArchiveSiPerimee() {
+  if (!cacheZip || rafraichissementEnCours) return;
+  if (Date.now() - zipVerifieLe <= TTL_ARCHIVE_MS) return;
+  rafraichirArchive(); // lance la tâche de fond, sans l'attendre
 }
 
 // wheelchair_boarding (stops.txt) / wheelchair_accessible (trips.txt) :
@@ -83,20 +153,23 @@ function parseCsv(text) {
 }
 
 function ouvrirZip() {
-  return unefois(
-    () => cacheZip,
-    () => promesseZip,
-    (v) => (promesseZip = v),
-    async () => {
-      const resp = await fetch(GTFS_STATIQUE_URL);
-      if (!resp.ok) {
-        throw new Error("Téléchargement GTFS statique échoué : " + resp.status);
-      }
-      const buffer = Buffer.from(await resp.arrayBuffer());
-      cacheZip = new AdmZip(buffer);
-      return cacheZip;
-    }
-  );
+  if (cacheZip) {
+    reverifierArchiveSiPerimee();
+    return Promise.resolve(cacheZip);
+  }
+  // Tout premier chargement : bloquant, dédupliqué entre appels concurrents.
+  if (!promesseZipInitial) {
+    promesseZipInitial = telechargerArchive()
+      .then((res) => {
+        installerArchive(res);
+        zipVerifieLe = Date.now();
+        return cacheZip;
+      })
+      .finally(() => {
+        promesseZipInitial = null;
+      });
+  }
+  return promesseZipInitial;
 }
 
 // Lit une entrée du ZIP, ou [] si le fichier est absent de l'archive.
@@ -122,15 +195,18 @@ function libelleMajoritaire(compteurs) {
 
 // --- Socle : arrêts, lignes, destinations. Rapide (petits fichiers). ---
 function chargerBase() {
-  return unefois(
-    () => cacheBase,
-    () => promesseBase,
-    (v) => (promesseBase = v),
-    _chargerBase
-  );
+  reverifierArchiveSiPerimee();
+  if (cacheBase && cacheBaseVersion === zipVersion) return Promise.resolve(cacheBase);
+  if (!promesseBase) {
+    promesseBase = _chargerBase().finally(() => {
+      promesseBase = null;
+    });
+  }
+  return promesseBase;
 }
 async function _chargerBase() {
   const zip = await ouvrirZip();
+  const version = zipVersion; // version de l'archive qu'on vient d'obtenir
 
   const arrets = {}; // stop_id -> nom
   const arretsPosition = {}; // stop_id -> {nom, lat, lon}
@@ -212,21 +288,29 @@ async function _chargerBase() {
     tripIdVersCle,
     shapeIdParCle,
   };
+  cacheBaseVersion = version;
   return cacheBase;
 }
 
 // --- Réseau : tracés et arrêts desservis. Lourd (shapes.txt + stop_times.txt). ---
 function chargerReseau() {
-  return unefois(
-    () => cacheReseau,
-    () => promesseReseau,
-    (v) => (promesseReseau = v),
-    _chargerReseau
-  );
+  reverifierArchiveSiPerimee();
+  if (cacheReseau && cacheReseauVersion === zipVersion) return Promise.resolve(cacheReseau);
+  if (!promesseReseau) {
+    promesseReseau = _chargerReseau().finally(() => {
+      promesseReseau = null;
+    });
+  }
+  return promesseReseau;
 }
 async function _chargerReseau() {
-  const zip = await ouvrirZip();
   const { arretsPosition, tripIdVersCle, shapeIdParCle } = await chargerBase();
+  // On dérive du socle qu'on vient de charger : même archive, donc on l'estampille
+  // de la même version. Si une nouvelle archive est arrivée entre-temps, le socle
+  // sera d'une version antérieure à zipVersion et ce cache sera reconstruit au
+  // prochain accès — pas de figement silencieux.
+  const zip = cacheZip;
+  const version = cacheBaseVersion;
 
   // shapes.txt : points géographiques de chaque tracé, à assembler dans l'ordre
   // de shape_pt_sequence pour dessiner l'itinéraire complet.
@@ -305,6 +389,7 @@ async function _chargerReseau() {
   });
 
   cacheReseau = { tracesParLigne, arretsParLigne, arretsParLigneDirection };
+  cacheReseauVersion = version;
   return cacheReseau;
 }
 
@@ -323,15 +408,18 @@ function versSecondes(hms) {
 }
 
 function chargerHoraires() {
-  return unefois(
-    () => cacheHoraires,
-    () => promesseHoraires,
-    (v) => (promesseHoraires = v),
-    _chargerHoraires
-  );
+  reverifierArchiveSiPerimee();
+  if (cacheHoraires && cacheHorairesVersion === zipVersion) return Promise.resolve(cacheHoraires);
+  if (!promesseHoraires) {
+    promesseHoraires = _chargerHoraires().finally(() => {
+      promesseHoraires = null;
+    });
+  }
+  return promesseHoraires;
 }
 async function _chargerHoraires() {
   const zip = await ouvrirZip();
+  const version = zipVersion;
 
   // trip_id -> ligne / sens / service / destination
   const infoTrip = {};
@@ -416,6 +504,7 @@ async function _chargerHoraires() {
   });
 
   cacheHoraires = { horairesParArret, departsParLigne, calendrier, exceptions };
+  cacheHorairesVersion = version;
   return cacheHoraires;
 }
 
