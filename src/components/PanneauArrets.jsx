@@ -33,6 +33,7 @@ export default function PanneauArrets({
   arretsParLigne = {},
   lignesInfo,
   vehicules,
+  passagesPrevus = [],
   position,
   onDemanderPosition,
   positionEnCours,
@@ -95,8 +96,8 @@ export default function PanneauArrets({
   }, [favoris.arrets, arretsInfos, position, requeteNorm]);
 
   const passagesDuDetail = useMemo(
-    () => (arretOuvert ? prochainsPassages(arretOuvert, vehicules) : []),
-    [arretOuvert, vehicules]
+    () => (arretOuvert ? prochainsPassages(arretOuvert, vehicules, passagesPrevus) : []),
+    [arretOuvert, vehicules, passagesPrevus]
   );
 
   // Lignes qui desservent l'arrêt ouvert, d'après la desserte théorique — utile
@@ -140,7 +141,7 @@ export default function PanneauArrets({
   }
 
   function rendreLigneArret(a, favori = false, cle = a.stopId) {
-    const passages = prochainsPassages(a.stopId, vehicules).slice(0, 3);
+    const passages = prochainsPassages(a.stopId, vehicules, passagesPrevus).slice(0, 3);
     return (
       <div
         key={cle}
@@ -162,6 +163,7 @@ export default function PanneauArrets({
                 <span key={i} className="flex items-center gap-1">
                   <Badge info={infoLigne(p.ligne)} />
                   <span className="text-[11.5px] tabular-nums text-[var(--ink-muted)]">
+                    {p.sansPosition ? "~" : ""}
                     {p.eta} min
                   </span>
                   {p.pmr === true && (
@@ -284,9 +286,11 @@ export default function PanneauArrets({
                         {p.retard !== null && p.retard !== undefined && (
                           <> · {formaterRetard(p.retard)}</>
                         )}
+                        {p.sansPosition && <> · position inconnue</>}
                       </div>
                     </div>
                     <div className="font-signage font-bold text-[15px] tabular-nums shrink-0">
+                      {p.sansPosition ? "~" : ""}
                       {p.eta}
                       <span className="text-[10.5px] font-sans font-normal ml-0.5">min</span>
                     </div>

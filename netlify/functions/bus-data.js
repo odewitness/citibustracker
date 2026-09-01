@@ -79,6 +79,30 @@ function retardStopTime(s) {
   return null;
 }
 
+// Transforme un stopTimeUpdate GTFS-RT en arrêt à venir lisible côté client :
+// heure prévue (epoch), retard en secondes, et heure théorique reconstituée
+// (heure prévue moins le retard courant). `arrets` = dictionnaire stop_id -> nom.
+function construireArretPrevu(s, arrets) {
+  const epoch = (s.arrival && s.arrival.time) || (s.departure && s.departure.time) || null;
+  const retardBrut = retardStopTime(s);
+  const delaiSecondes = retardBrut === null ? 0 : retardBrut;
+  const epochTheorique = epoch ? Number(epoch) - delaiSecondes : null;
+  const horairePrevu = epochTheorique
+    ? new Date(epochTheorique * 1000).toLocaleTimeString("fr-FR", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Europe/Paris",
+      })
+    : null;
+  return {
+    stop_id: s.stopId,
+    nom: arrets[s.stopId] || s.stopId,
+    arrivee: epoch ? Number(epoch) : null,
+    retard: epoch ? delaiSecondes : null,
+    horaire_prevu: horairePrevu,
+  };
+}
+
 // Un champ TranslatedString GTFS-RT porte plusieurs traductions : on prend le
 // français si présent, sinon la première disponible.
 function texteTraduit(champ) {
@@ -203,27 +227,7 @@ exports.handler = async function () {
         if (idxDepart === -1) idxDepart = 0;
 
         const aVenir = tu.stopTimeUpdate.slice(idxDepart);
-        prochainsArrets = aVenir.map((s) => {
-          const epoch = (s.arrival && s.arrival.time) || (s.departure && s.departure.time) || null;
-          const retardBrut = retardStopTime(s);
-          const delaiSecondes = retardBrut === null ? 0 : retardBrut;
-          // L'heure théorique (horaire de la fiche horaire) = heure prédite moins le retard actuel.
-          const epochTheorique = epoch ? Number(epoch) - delaiSecondes : null;
-          const horairePrevu = epochTheorique
-            ? new Date(epochTheorique * 1000).toLocaleTimeString("fr-FR", {
-                hour: "2-digit",
-                minute: "2-digit",
-                timeZone: "Europe/Paris",
-              })
-            : null;
-          return {
-            stop_id: s.stopId,
-            nom: arrets[s.stopId] || s.stopId,
-            arrivee: epoch ? Number(epoch) : null,
-            retard: epoch ? delaiSecondes : null,
-            horaire_prevu: horairePrevu,
-          };
-        });
+        prochainsArrets = aVenir.map((s) => construireArretPrevu(s, arrets));
 
         const entree = aVenir[0];
         if (!prochainArret) {
@@ -246,6 +250,7 @@ exports.handler = async function () {
 
       vehicules.push({
         id: vid,
+        trip_id: tripId,
         label: (v.vehicle && v.vehicle.label) || vid,
         ligne: v.trip ? v.trip.routeId : null,
         direction: v.trip ? v.trip.directionId : null,
@@ -265,6 +270,44 @@ exports.handler = async function () {
 
     const alertes = extraireAlertes(feed, arrets);
 
+    // Courses annoncées par le flux (tripUpdate) mais sans position GPS : au
+    // démarrage du service (rentrée, première course du matin) le bus n'est pas
+    // encore connecté au SAE. Tant qu'un stopTimeUpdate porte une heure
+    // exploitable, on les remonte comme passages « prévus, position inconnue »
+    // pour ne pas laisser un arrêt vide alors que le réseau annonce un passage.
+    // On écarte les courses annulées et celles déjà couvertes par un véhicule.
+    const tripsAvecVehicule = new Set(vehicules.map((v) => v.trip_id).filter(Boolean));
+    const COURSE_ANNULEE = protobuf.transit_realtime.TripDescriptor.ScheduleRelationship.CANCELED;
+    const ARRET_SUPPRIME =
+      protobuf.transit_realtime.TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED;
+    const maintenantSec = Math.floor(Date.now() / 1000);
+
+    const passagesPrevus = [];
+    feed.entity.forEach((entity) => {
+      const tu = entity.tripUpdate;
+      if (!tu || !tu.trip || !tu.trip.tripId) return;
+      const tripId = tu.trip.tripId;
+      if (tripsAvecVehicule.has(tripId)) return;
+      if (tu.trip.scheduleRelationship === COURSE_ANNULEE) return;
+
+      const aVenir = (tu.stopTimeUpdate || []).filter((s) => {
+        if (s.scheduleRelationship === ARRET_SUPPRIME) return false;
+        const epoch = (s.arrival && s.arrival.time) || (s.departure && s.departure.time);
+        return epoch && Number(epoch) >= maintenantSec - 60;
+      });
+      if (aVenir.length === 0) return; // NO_DATA, course déjà terminée… : rien à montrer
+
+      passagesPrevus.push({
+        trip_id: tripId,
+        ligne: tu.trip.routeId || null,
+        direction: tu.trip.directionId ?? null,
+        destination: destinationsParTrip[tripId] || null,
+        pmr: pmrParTrip[tripId] !== undefined ? pmrParTrip[tripId] : null,
+        prochains_arrets: aVenir.map((s) => construireArretPrevu(s, arrets)),
+        sans_position: true,
+      });
+    });
+
     return {
       statusCode: 200,
       headers: {
@@ -280,6 +323,7 @@ exports.handler = async function () {
           second: "2-digit",
         }),
         vehicules: vehicules,
+        passages_prevus: passagesPrevus,
         lignes: lignes,
         alertes: alertes,
       }),
@@ -298,3 +342,4 @@ exports.extraireAlertes = extraireAlertes;
 exports.texteTraduit = texteTraduit;
 exports.interpreterOccupation = interpreterOccupation;
 exports.retardStopTime = retardStopTime;
+exports.construireArretPrevu = construireArretPrevu;

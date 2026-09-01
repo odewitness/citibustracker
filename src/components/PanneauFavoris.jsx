@@ -11,6 +11,7 @@ export default function PanneauFavoris({
   arretsInfos,
   lignesInfo,
   vehicules,
+  passagesPrevus = [],
   lignesActives,
   onChoisirArret,
   onCreerAlerte,
@@ -86,7 +87,7 @@ export default function PanneauFavoris({
               {favoris.arrets.map((stopId) => {
                 const a = arretsInfos[stopId];
                 if (!a) return null;
-                const passages = prochainsPassages(stopId, vehicules).slice(0, 3);
+                const passages = prochainsPassages(stopId, vehicules, passagesPrevus).slice(0, 3);
                 return (
                   <div
                     key={stopId}
@@ -117,6 +118,7 @@ export default function PanneauFavoris({
                                   {info.nom}
                                 </span>
                                 <span className="text-[11.5px] tabular-nums text-[var(--ink-muted)]">
+                                  {p.sansPosition ? "~" : ""}
                                   {p.eta} min
                                 </span>
                                 {p.pmr === true && (

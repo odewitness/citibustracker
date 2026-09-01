@@ -297,24 +297,32 @@ export function arretsProches(arretsInfos, position, { exclure = [], limite = 5 
 
 // Prochains passages à un arrêt, reconstitués depuis les bus en circulation.
 // Utilisé à la fois par le popup de la carte et par le panneau des arrêts.
-export function prochainsPassages(stopId, vehicules) {
+// `passagesPrevus` : courses annoncées par le flux sans position GPS (bus pas
+// encore connecté au SAE). Mêmes prédictions d'arrivée que les véhicules, mais
+// marquées `sansPosition` pour que l'affichage le signale.
+export function prochainsPassages(stopId, vehicules, passagesPrevus = []) {
   const passages = [];
-  (vehicules || []).forEach((v) => {
-    (v.prochains_arrets || []).forEach((a) => {
-      if (a.stop_id !== stopId || !a.arrivee) return;
-      const etaMinutes = (a.arrivee * 1000 - Date.now()) / 60000;
-      if (etaMinutes < -1) return;
-      passages.push({
-        ligne: v.ligne,
-        destination: v.destination,
-        retard: a.retard,
-        horairePrevu: a.horaire_prevu,
-        eta: Math.max(0, Math.round(etaMinutes)),
-        pmr: v.pmr ?? null,
-        occupation: v.occupation || null,
+  const collecter = (source, sansPosition) => {
+    (source || []).forEach((v) => {
+      (v.prochains_arrets || []).forEach((a) => {
+        if (a.stop_id !== stopId || !a.arrivee) return;
+        const etaMinutes = (a.arrivee * 1000 - Date.now()) / 60000;
+        if (etaMinutes < -1) return;
+        passages.push({
+          ligne: v.ligne,
+          destination: v.destination,
+          retard: a.retard,
+          horairePrevu: a.horaire_prevu,
+          eta: Math.max(0, Math.round(etaMinutes)),
+          pmr: v.pmr ?? null,
+          occupation: v.occupation || null,
+          sansPosition,
+        });
       });
     });
-  });
+  };
+  collecter(vehicules, false);
+  collecter(passagesPrevus, true);
   return passages.sort((x, y) => x.eta - y.eta);
 }
 

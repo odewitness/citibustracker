@@ -49,6 +49,7 @@ export default function App() {
 
   const [donnees, setDonnees] = useState({
     vehicules: [],
+    passages_prevus: [],
     lignes: {},
     alertes: [],
     generated_at: null,
@@ -1135,6 +1136,7 @@ export default function App() {
         arretsParLigne={reseau.arrets}
         lignesInfo={lignesInfo}
         vehicules={donnees.vehicules}
+        passagesPrevus={donnees.passages_prevus || []}
         position={positionUtilisateur}
         onDemanderPosition={() => localiser({ recentrer: false })}
         positionEnCours={recentrageEnCours}
@@ -1149,6 +1151,7 @@ export default function App() {
         arretsInfos={reseau.arretsInfos}
         lignesInfo={lignesInfo}
         vehicules={donnees.vehicules}
+        passagesPrevus={donnees.passages_prevus || []}
         lignesActives={lignesActivesCourantes}
         onChoisirArret={ouvrirFicheArret}
         onCreerAlerte={creerAlertePourArret}
@@ -1270,6 +1273,7 @@ export default function App() {
           arretsInfos={reseau.arretsInfos}
           lignesInfo={lignesInfo}
           vehicules={donnees.vehicules}
+          passagesPrevus={donnees.passages_prevus || []}
           alertes={donnees.alertes}
           generatedAt={donnees.generated_at}
           erreur={horsLigne ? "Hors ligne — données figées" : erreur}

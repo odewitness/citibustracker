@@ -162,6 +162,28 @@ describe("prochainsPassages", () => {
     expect(passages[0].pmr).toBe(true);
     expect(passages[0].occupation).toEqual({ niveau: "moyen", pct: 55 });
   });
+
+  it("fusionne les passages prévus sans position, triés avec les véhicules", () => {
+    const prevus = [
+      {
+        ligne: "3",
+        destination: "Réveillon 2",
+        prochains_arrets: [{ stop_id: "_1", arrivee: dans(6), retard: 120 }],
+      },
+    ];
+    const passages = prochainsPassages("_1", vehicules, prevus);
+    // véhicule L4 à 3 min, prévu L3 à 6 min, véhicule L3 à 12 min
+    expect(passages.map((p) => [p.ligne, p.sansPosition])).toEqual([
+      ["4", false],
+      ["3", true],
+      ["3", false],
+    ]);
+  });
+
+  it("marque sansPosition=false quand l'argument passagesPrevus est omis", () => {
+    const passages = prochainsPassages("_1", vehicules);
+    expect(passages.every((p) => p.sansPosition === false)).toBe(true);
+  });
 });
 
 describe("tempsMarcheMinutes", () => {

@@ -38,8 +38,10 @@ function LignePassage({ p, lignesInfo }) {
           </span>
         )}
         {retard && <span className="ml-1">· {retard}</span>}
+        {p.sansPosition && <span className="ml-1" title="Course annoncée, non géolocalisée">· prévu</span>}
       </span>
       <span className="shrink-0 font-signage font-bold text-[13px] tabular-nums">
+        {p.sansPosition ? "~" : ""}
         {p.eta}
         <span className="text-[10px] font-sans font-normal ml-0.5">min</span>
       </span>
@@ -50,6 +52,7 @@ function LignePassage({ p, lignesInfo }) {
 function CarteArret({
   arret,
   vehicules,
+  passagesPrevus,
   lignesInfo,
   onOuvrir,
   onCreerAlerte,
@@ -58,7 +61,7 @@ function CarteArret({
   montrerDistance,
   realtimePret,
 }) {
-  const passages = prochainsPassages(arret.stopId, vehicules).slice(0, 4);
+  const passages = prochainsPassages(arret.stopId, vehicules, passagesPrevus).slice(0, 4);
   return (
     <div className="rounded-xl border border-[var(--line)] p-3">
       <div className="flex items-center gap-2">
@@ -107,6 +110,7 @@ export default function TableauDeBord({
   arretsInfos = {},
   lignesInfo = {},
   vehicules = [],
+  passagesPrevus = [],
   alertes = [],
   generatedAt,
   erreur,
@@ -277,6 +281,7 @@ export default function TableauDeBord({
                   key={a.stopId}
                   arret={a}
                   vehicules={vehicules}
+                  passagesPrevus={passagesPrevus}
                   lignesInfo={lignesInfo}
                   onOuvrir={() => onOuvrirArret?.(a)}
                   onCreerAlerte={onCreerAlerte}
@@ -319,6 +324,7 @@ export default function TableauDeBord({
                   key={a.stopId}
                   arret={a}
                   vehicules={vehicules}
+                  passagesPrevus={passagesPrevus}
                   lignesInfo={lignesInfo}
                   onOuvrir={() => onOuvrirArret?.(a)}
                   onCreerAlerte={onCreerAlerte}

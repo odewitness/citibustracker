@@ -80,7 +80,12 @@ Le site de production se déploie automatiquement depuis la branche `main`.
   Renvoie aussi les alertes trafic (`extraireAlertes`), l'horodatage de chaque
   position, l'affluence à bord (`interpreterOccupation`) et l'accessibilité UFR
   de la course. N'utilise que le socle du GTFS statique (arrêts, lignes,
-  destinations, drapeaux d'accessibilité).
+  destinations, drapeaux d'accessibilité). `passages_prevus` : courses annoncées
+  par le flux (`tripUpdate`) mais sans position GPS — bus pas encore connecté au
+  SAE (rentrée, première course du matin) ; remontées avec leurs prédictions
+  d'arrivée et affichées « position inconnue » plutôt que de laisser l'arrêt
+  vide. Les courses annulées et celles sans heure exploitable (`NO_DATA`) sont
+  écartées.
 - `netlify/functions/reseau-statique.js` — tracés et desserte des lignes.
   Quasi-statique, mis en cache 30 min côté navigateur.
 - `netlify/functions/horaires-arret.js` — fiche horaire théorique d'un arrêt
