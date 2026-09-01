@@ -54,6 +54,9 @@ export default function App() {
     alertes: [],
     generated_at: null,
   });
+  const [majEnCours, setMajEnCours] = useState(false);
+  // Assigné par l'effet de polling : force une requête immédiate (bouton).
+  const rafraichirRef = useRef(null);
   const [reseau, setReseau] = useState({
     traces: {},
     arrets: {},
@@ -185,8 +188,10 @@ export default function App() {
   // --- Récupération des données (toutes les 15s) ---
   useEffect(() => {
     let minuteur = null;
+    let dernierAppel = 0;
 
     async function recuperer() {
+      dernierAppel = Date.now();
       try {
         const r = await fetch("/.netlify/functions/bus-data");
         const data = await r.json();
@@ -256,30 +261,62 @@ export default function App() {
       minuteur = null;
     }
 
+    // Retour de l'app au premier plan. iOS ne déclenche pas toujours
+    // `visibilitychange` quand on rouvre une PWA installée : on écoute aussi
+    // `pageshow` et `focus`. Ces événements se suivent parfois à quelques
+    // millisecondes — le garde `dernierAppel` évite d'enchaîner les requêtes.
+    // Sans ça, on retombait sur l'affichage figé de la dernière ouverture
+    // jusqu'au prochain tic de 15 s (voire indéfiniment si l'événement manquait).
+    function rafraichirAuRetour() {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - dernierAppel < 3000) {
+        demarrer();
+        return;
+      }
+      recuperer();
+      demarrer();
+    }
+
     // Inutile d'interroger le serveur toutes les 15 s quand l'app est en
     // arrière-plan ou l'écran éteint : c'est de la batterie et des données
     // mobiles pour un écran que personne ne regarde. On garde le polling
     // uniquement si une alerte est armée (le suivi doit rester à jour).
     function surChangementVisibilite() {
-      if (document.visibilityState === "visible") {
-        // Rafraîchissement immédiat : au retour de veille, l'affichage peut
-        // dater de plusieurs minutes (le suivi d'alerte gardait le minuteur en
-        // vie, donc demarrer() seul n'aurait rien relancé).
-        recuperer();
-        demarrer();
-      } else if (!alerteArmeeRef.current) {
-        arreter();
-      }
+      if (document.visibilityState === "visible") rafraichirAuRetour();
+      else if (!alerteArmeeRef.current) arreter();
     }
+
+    // Bouton « rafraîchir » : une requête immédiate (même dans la fenêtre de
+    // garde), en s'assurant que le minuteur tourne ensuite.
+    rafraichirRef.current = () => {
+      const p = recuperer(); // met à jour dernierAppel
+      if (!minuteur) minuteur = setInterval(recuperer, 15000);
+      return p;
+    };
 
     demarrer();
     document.addEventListener("visibilitychange", surChangementVisibilite);
+    window.addEventListener("pageshow", rafraichirAuRetour);
+    window.addEventListener("focus", rafraichirAuRetour);
     return () => {
       arreter();
       document.removeEventListener("visibilitychange", surChangementVisibilite);
+      window.removeEventListener("pageshow", rafraichirAuRetour);
+      window.removeEventListener("focus", rafraichirAuRetour);
+      rafraichirRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function rafraichirMaintenant() {
+    if (majEnCours || !rafraichirRef.current) return;
+    setMajEnCours(true);
+    try {
+      await rafraichirRef.current();
+    } finally {
+      setMajEnCours(false);
+    }
+  }
 
   useEffect(() => {
     lireClePush().then(setClePush);
@@ -1032,6 +1069,8 @@ export default function App() {
             direction={direction}
             onChangerDirection={setDirection}
             onRetourTableau={() => setEcran("tableau")}
+            onRafraichir={rafraichirMaintenant}
+            rafraichissementEnCours={majEnCours}
             onVoirLigneDetail={() => ouvrirPanneauLigne(null)}
           />
 
@@ -1276,6 +1315,8 @@ export default function App() {
           passagesPrevus={donnees.passages_prevus || []}
           alertes={donnees.alertes}
           generatedAt={donnees.generated_at}
+          onRafraichir={rafraichirMaintenant}
+          rafraichissementEnCours={majEnCours}
           erreur={horsLigne ? "Hors ligne — données figées" : erreur}
           position={positionUtilisateur}
           onDemanderPosition={() => localiser({ recentrer: false })}

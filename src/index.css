@@ -65,6 +65,6 @@ body {
 .animate-sonnerie { display: inline-block; animation: sonnerie 1.6s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-alerte, .animate-sonnerie, .animate-pouls { animation: none; }
+  .animate-alerte, .animate-sonnerie, .animate-pouls, .animate-spin { animation: none; }
   .bus-fluide .leaflet-marker-icon { transition: none; }
 }

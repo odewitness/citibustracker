@@ -114,6 +114,8 @@ export default function TableauDeBord({
   alertes = [],
   generatedAt,
   erreur,
+  onRafraichir,
+  rafraichissementEnCours,
   position,
   onDemanderPosition,
   positionEnCours,
@@ -179,9 +181,21 @@ export default function TableauDeBord({
           </button>
         </div>
 
-        <p className="text-[11.5px] text-[var(--ink-muted)] pb-2">
-          {erreur ? erreur : generatedAt ? `Temps réel · ${generatedAt}` : "Chargement…"}
-        </p>
+        <div className="flex items-center gap-2 pb-2">
+          <p className="text-[11.5px] text-[var(--ink-muted)]">
+            {erreur ? erreur : generatedAt ? `Temps réel · ${generatedAt}` : "Chargement…"}
+          </p>
+          {onRafraichir && (
+            <button
+              onClick={onRafraichir}
+              disabled={rafraichissementEnCours}
+              aria-label="Rafraîchir les données"
+              className="shrink-0 w-6 h-6 rounded-full bg-[var(--line)] text-[var(--ink)] leading-none flex items-center justify-center active:scale-90 disabled:opacity-50"
+            >
+              <span className={"text-[13px] " + (rafraichissementEnCours ? "animate-spin" : "")}>⟳</span>
+            </button>
+          )}
+        </div>
 
         {suiviActif && (
           <button

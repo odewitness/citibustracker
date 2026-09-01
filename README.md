@@ -74,6 +74,10 @@ Le site de production se déploie automatiquement depuis la branche `main`.
   est pilotée par `App` (`busSelectionneId`) et alimente `FicheBus`. Le suivi
   caméra (`busVerrouilleId` + `suiviDecale`, `App`) est armé par un appui long :
   `CarteBus` recentre à chaque relevé et signale tout geste manuel de recadrage.
+  Le flux temps réel est interrogé toutes les 15 s tant que l'app est visible,
+  et rafraîchi au retour au premier plan sur `visibilitychange`, `pageshow` et
+  `focus` (iOS ne déclenche pas toujours le premier pour une PWA installée) ;
+  un bouton ⟳ (tableau de bord et bandeau carte) force une requête immédiate.
 - `src/favoris.js` / `src/alertes.js` — état local partagé (favoris, alertes
   programmées) exposé via des hooks avec un mini-bus d'événements.
 - `netlify/functions/bus-data.js` — flux temps réel, appelé toutes les 15 s.

@@ -48,6 +48,8 @@ export default function IleStatut({
   direction,
   onChangerDirection,
   onRetourTableau,
+  onRafraichir,
+  rafraichissementEnCours,
   onVoirLigneDetail,
 }) {
   // Les filtres sont repliés par défaut : l'encadré ne mange plus la carte,
@@ -73,13 +75,28 @@ export default function IleStatut({
               <GrilleIcone />
             </button>
           )}
+          {onRafraichir && (
+            <button
+              onClick={onRafraichir}
+              disabled={rafraichissementEnCours}
+              aria-label="Rafraîchir les données"
+              className={
+                "shrink-0 h-full px-1.5 flex items-center text-white/90 active:opacity-60 disabled:opacity-40 " +
+                (onRetourTableau ? "" : "pl-3")
+              }
+            >
+              <span className={"text-[15px] leading-none " + (rafraichissementEnCours ? "animate-spin" : "")}>
+                ⟳
+              </span>
+            </button>
+          )}
           <button
             onClick={() => setOuvert((o) => !o)}
             aria-expanded={ouvert}
             aria-label={ouvert ? "Masquer les filtres" : "Afficher les filtres"}
             className={
               "flex-1 min-w-0 flex items-center gap-2.5 pr-3.5 h-full text-left " +
-              (onRetourTableau ? "pl-1.5" : "pl-3.5")
+              (onRetourTableau || onRafraichir ? "pl-1.5" : "pl-3.5")
             }
           >
             <span className="w-[7px] h-[7px] rounded-full bg-[var(--amber-500)] animate-pouls shrink-0" />
