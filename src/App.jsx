@@ -55,6 +55,8 @@ export default function App() {
     generated_at: null,
   });
   const [majEnCours, setMajEnCours] = useState(false);
+  // Horodatage de la dernière récupération réussie (affiché en coin de carte).
+  const [derniereMaj, setDerniereMaj] = useState(null);
   // Assigné par l'effet de polling : force une requête immédiate (bouton).
   const rafraichirRef = useRef(null);
   const [reseau, setReseau] = useState({
@@ -201,6 +203,7 @@ export default function App() {
         }
         setErreur(null);
         setDonnees(data);
+        setDerniereMaj(new Date());
 
         // Le bus dont la fiche est ouverte a disparu du flux (course terminée,
         // signal perdu durablement) : on referme la fiche en l'expliquant plutôt
@@ -1029,7 +1032,13 @@ export default function App() {
     ? "Hors ligne — données figées"
     : erreur
       ? erreur
-      : `${nbVisibles} bus${donnees.generated_at ? " • mis à jour à " + donnees.generated_at : ""}`;
+      : `${nbVisibles} bus`;
+
+  // Date + heure de la dernière mise à jour réussie, affichée en petit dans le
+  // coin bas-gauche de la carte.
+  const majTexte = derniereMaj
+    ? `${derniereMaj.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })} ${derniereMaj.toLocaleTimeString("fr-FR")}`
+    : null;
 
   return (
     <div className="font-sans">
@@ -1079,6 +1088,18 @@ export default function App() {
             lignesInfo={lignesInfo}
             onVoirLigne={(id) => ouvrirPanneauLigne(id)}
           />
+
+          {majTexte && !feuilleOuverte && (
+            <div
+              className="fixed z-[1090] rounded-lg bg-[var(--chrome-950)]/80 px-2 py-1 text-[10.5px] font-medium tabular-nums text-white/85 backdrop-blur-sm pointer-events-none"
+              style={{
+                left: "max(8px, env(safe-area-inset-left))",
+                bottom: "max(8px, env(safe-area-inset-bottom))",
+              }}
+            >
+              Mis à jour {majTexte}
+            </div>
+          )}
         </>
       )}
 

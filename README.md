@@ -78,6 +78,8 @@ Le site de production se déploie automatiquement depuis la branche `main`.
   et rafraîchi au retour au premier plan sur `visibilitychange`, `pageshow` et
   `focus` (iOS ne déclenche pas toujours le premier pour une PWA installée) ;
   un bouton ⟳ (tableau de bord et bandeau carte) force une requête immédiate.
+  La date et l'heure de la dernière récupération réussie (`derniereMaj`)
+  s'affichent en petit dans le coin bas-gauche de la carte.
 - `src/favoris.js` / `src/alertes.js` — état local partagé (favoris, alertes
   programmées) exposé via des hooks avec un mini-bus d'événements.
 - `netlify/functions/bus-data.js` — flux temps réel, appelé toutes les 15 s.
