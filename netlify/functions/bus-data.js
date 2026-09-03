@@ -79,6 +79,24 @@ function retardStopTime(s) {
   return null;
 }
 
+// protobuf.js peut décoder un uint64 en objet Long ({low, high}) plutôt qu'en
+// nombre : `Number()` renverrait alors NaN silencieusement. On passe par
+// toNumber() quand il existe.
+function nombreEpoch(valeur) {
+  if (valeur === null || valeur === undefined) return null;
+  if (typeof valeur === "number") return Number.isFinite(valeur) ? valeur : null;
+  if (typeof valeur.toNumber === "function") {
+    const n = valeur.toNumber();
+    return Number.isFinite(n) ? n : null;
+  }
+  const n = Number(valeur);
+  return Number.isFinite(n) ? n : null;
+}
+
+// Au-delà de cet écart entre l'horloge du producteur (FeedHeader.timestamp) et
+// la nôtre, on considère que le flux est horodaté avec une horloge décalée.
+const ECART_HORLOGE_TOLERE_SECONDES = 120;
+
 const COURSE_ANNULEE = protobuf.transit_realtime.TripDescriptor.ScheduleRelationship.CANCELED;
 const ARRET_SUPPRIME =
   protobuf.transit_realtime.TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED;
@@ -210,6 +228,17 @@ exports.handler = async function () {
 
     const maintenantSec = Math.floor(Date.now() / 1000);
 
+    // Instant de production déclaré par le flux. Certains producteurs horodatent
+    // avec une horloge décalée : leurs positions paraissent alors vieilles de
+    // plusieurs heures alors que les bus roulent, et toute l'app les traite en
+    // « fantômes ». On mesure donc la fraîcheur par rapport à l'instant de
+    // production du flux plutôt qu'à notre propre horloge — mais seulement quand
+    // l'écart est franc, pour ne pas masquer un flux réellement gelé.
+    const horodatageFlux = feed.header ? nombreEpoch(feed.header.timestamp) : null;
+    const fluxDecale =
+      horodatageFlux !== null && maintenantSec - horodatageFlux > ECART_HORLOGE_TOLERE_SECONDES;
+    const refFlux = fluxDecale ? horodatageFlux : maintenantSec;
+
     const horaires = {};
     feed.entity.forEach((entity) => {
       if (entity.tripUpdate && entity.tripUpdate.vehicle && entity.tripUpdate.vehicle.id) {
@@ -253,7 +282,7 @@ exports.handler = async function () {
         }
         if (idxDepart === -1) idxDepart = 0;
 
-        const aVenir = arretsAVenir(tu.stopTimeUpdate.slice(idxDepart), maintenantSec, true);
+        const aVenir = arretsAVenir(tu.stopTimeUpdate.slice(idxDepart), refFlux, true);
         prochainsArrets = aVenir.map((s) => construireArretPrevu(s, arrets));
 
         // La liste peut désormais être vide (course terminée dont le flux traîne
@@ -278,7 +307,15 @@ exports.handler = async function () {
       // Horodatage de la position (VehiclePosition.timestamp) : permet au client
       // de repérer un « bus fantôme » dont la position n'a pas bougé depuis
       // plusieurs minutes — flux figé, on n'attend pas ce bus pour rien.
-      const horodatage = v.timestamp ? Number(v.timestamp) : null;
+      // Recalé sur NOTRE horloge : on renvoie l'instant équivalent chez nous, si
+      // bien que le client continue de calculer un âge par simple différence
+      // avec l'heure courante — et que cet âge continue de vieillir entre deux
+      // relevés.
+      const horodatageBrut = nombreEpoch(v.timestamp);
+      const horodatage =
+        horodatageBrut === null
+          ? null
+          : maintenantSec - Math.max(0, refFlux - horodatageBrut);
 
       vehicules.push({
         id: vid,
@@ -318,7 +355,7 @@ exports.handler = async function () {
       if (tripsAvecVehicule.has(tripId)) return;
       if (tu.trip.scheduleRelationship === COURSE_ANNULEE) return;
 
-      const aVenir = arretsAVenir(tu.stopTimeUpdate, maintenantSec, false);
+      const aVenir = arretsAVenir(tu.stopTimeUpdate, refFlux, false);
       if (aVenir.length === 0) return; // NO_DATA, course déjà terminée… : rien à montrer
 
       passagesPrevus.push({
@@ -346,6 +383,11 @@ exports.handler = async function () {
           minute: "2-digit",
           second: "2-digit",
         }),
+        // Diagnostic : instant de production déclaré par le flux, notre horloge,
+        // et si l'écart entre les deux nous a fait recaler les horodatages.
+        horodatage_flux: horodatageFlux,
+        horloge_serveur: maintenantSec,
+        flux_decale: fluxDecale,
         vehicules: vehicules,
         passages_prevus: passagesPrevus,
         lignes: lignes,
@@ -368,3 +410,4 @@ exports.interpreterOccupation = interpreterOccupation;
 exports.retardStopTime = retardStopTime;
 exports.construireArretPrevu = construireArretPrevu;
 exports.arretsAVenir = arretsAVenir;
+exports.nombreEpoch = nombreEpoch;

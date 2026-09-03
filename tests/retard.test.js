@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { retardStopTime, construireArretPrevu, arretsAVenir } from "../netlify/functions/bus-data.js";
+import {
+  retardStopTime,
+  construireArretPrevu,
+  arretsAVenir,
+  nombreEpoch,
+} from "../netlify/functions/bus-data.js";
 
 describe("retardStopTime", () => {
   it("prend arrival.delay quand il est présent", () => {
@@ -103,5 +108,21 @@ describe("arretsAVenir", () => {
 
   it("accepte une liste absente", () => {
     expect(arretsAVenir(undefined, MAINTENANT, true)).toEqual([]);
+  });
+});
+
+describe("nombreEpoch", () => {
+  it("lit un nombre tel quel", () => {
+    expect(nombreEpoch(1700000000)).toBe(1700000000);
+  });
+  it("lit un Long protobuf via toNumber()", () => {
+    expect(nombreEpoch({ low: 1, high: 0, toNumber: () => 1700000000 })).toBe(1700000000);
+  });
+  it("refuse une valeur absente ou non finie", () => {
+    expect(nombreEpoch(null)).toBeNull();
+    expect(nombreEpoch(undefined)).toBeNull();
+    expect(nombreEpoch(NaN)).toBeNull();
+    // Le piège : `Number(objetLong)` vaut NaN, ce qui passait en douce.
+    expect(nombreEpoch({ low: 1, high: 0 })).toBeNull();
   });
 });
