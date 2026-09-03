@@ -79,6 +79,31 @@ function retardStopTime(s) {
   return null;
 }
 
+const COURSE_ANNULEE = protobuf.transit_realtime.TripDescriptor.ScheduleRelationship.CANCELED;
+const ARRET_SUPPRIME =
+  protobuf.transit_realtime.TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED;
+
+// Ne garde d'un tripUpdate que les arrêts réellement à venir : on écarte les
+// arrêts supprimés (SKIPPED) et ceux dont l'heure est déjà passée — tolérance
+// d'une minute pour un bus qui vient tout juste de desservir l'arrêt.
+//
+// Le flux continue de publier une course longtemps après sa fin, avec tous ses
+// arrêts au passé. Sans ce filtre, un bus rentré au dépôt gardait une liste
+// d'arrêts non vide, et le client le classait « signal perdu » (bus encore
+// attendu) au lieu de « hors service » pendant des heures.
+//
+// `garderSansHeure` : un arrêt sans heure exploitable est conservé dans la frise
+// d'un véhicule — on ne peut pas affirmer qu'il est passé — mais écarté d'un
+// passage annoncé sans position, qui n'aurait alors rien à afficher.
+function arretsAVenir(stopTimeUpdates, maintenantSec, garderSansHeure) {
+  return (stopTimeUpdates || []).filter((s) => {
+    if (s.scheduleRelationship === ARRET_SUPPRIME) return false;
+    const epoch = (s.arrival && s.arrival.time) || (s.departure && s.departure.time);
+    if (!epoch) return Boolean(garderSansHeure);
+    return Number(epoch) >= maintenantSec - 60;
+  });
+}
+
 // Transforme un stopTimeUpdate GTFS-RT en arrêt à venir lisible côté client :
 // heure prévue (epoch), retard en secondes, et heure théorique reconstituée
 // (heure prévue moins le retard courant). `arrets` = dictionnaire stop_id -> nom.
@@ -183,6 +208,8 @@ exports.handler = async function () {
     const arrayBuffer = await resp.arrayBuffer();
     const feed = protobuf.transit_realtime.FeedMessage.decode(new Uint8Array(arrayBuffer));
 
+    const maintenantSec = Math.floor(Date.now() / 1000);
+
     const horaires = {};
     feed.entity.forEach((entity) => {
       if (entity.tripUpdate && entity.tripUpdate.vehicle && entity.tripUpdate.vehicle.id) {
@@ -226,15 +253,20 @@ exports.handler = async function () {
         }
         if (idxDepart === -1) idxDepart = 0;
 
-        const aVenir = tu.stopTimeUpdate.slice(idxDepart);
+        const aVenir = arretsAVenir(tu.stopTimeUpdate.slice(idxDepart), maintenantSec, true);
         prochainsArrets = aVenir.map((s) => construireArretPrevu(s, arrets));
 
+        // La liste peut désormais être vide (course terminée dont le flux traîne
+        // encore) : on ne dérive alors ni prochain arrêt ni retard d'une donnée
+        // périmée.
         const entree = aVenir[0];
-        if (!prochainArret) {
-          prochainArret = arrets[entree.stopId] || entree.stopId;
+        if (entree) {
+          if (!prochainArret) {
+            prochainArret = arrets[entree.stopId] || entree.stopId;
+          }
+          const retardEntree = retardStopTime(entree);
+          if (retardEntree !== null) retard = retardEntree;
         }
-        const retardEntree = retardStopTime(entree);
-        if (retardEntree !== null) retard = retardEntree;
       }
 
       const tripId = v.trip ? v.trip.tripId : null;
@@ -277,10 +309,6 @@ exports.handler = async function () {
     // pour ne pas laisser un arrêt vide alors que le réseau annonce un passage.
     // On écarte les courses annulées et celles déjà couvertes par un véhicule.
     const tripsAvecVehicule = new Set(vehicules.map((v) => v.trip_id).filter(Boolean));
-    const COURSE_ANNULEE = protobuf.transit_realtime.TripDescriptor.ScheduleRelationship.CANCELED;
-    const ARRET_SUPPRIME =
-      protobuf.transit_realtime.TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED;
-    const maintenantSec = Math.floor(Date.now() / 1000);
 
     const passagesPrevus = [];
     feed.entity.forEach((entity) => {
@@ -290,11 +318,7 @@ exports.handler = async function () {
       if (tripsAvecVehicule.has(tripId)) return;
       if (tu.trip.scheduleRelationship === COURSE_ANNULEE) return;
 
-      const aVenir = (tu.stopTimeUpdate || []).filter((s) => {
-        if (s.scheduleRelationship === ARRET_SUPPRIME) return false;
-        const epoch = (s.arrival && s.arrival.time) || (s.departure && s.departure.time);
-        return epoch && Number(epoch) >= maintenantSec - 60;
-      });
+      const aVenir = arretsAVenir(tu.stopTimeUpdate, maintenantSec, false);
       if (aVenir.length === 0) return; // NO_DATA, course déjà terminée… : rien à montrer
 
       passagesPrevus.push({
@@ -343,3 +367,4 @@ exports.texteTraduit = texteTraduit;
 exports.interpreterOccupation = interpreterOccupation;
 exports.retardStopTime = retardStopTime;
 exports.construireArretPrevu = construireArretPrevu;
+exports.arretsAVenir = arretsAVenir;

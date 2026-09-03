@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { retardStopTime, construireArretPrevu } from "../netlify/functions/bus-data.js";
+import { retardStopTime, construireArretPrevu, arretsAVenir } from "../netlify/functions/bus-data.js";
 
 describe("retardStopTime", () => {
   it("prend arrival.delay quand il est présent", () => {
@@ -58,5 +58,50 @@ describe("construireArretPrevu", () => {
       retard: null,
       horaire_prevu: null,
     });
+  });
+});
+
+describe("arretsAVenir", () => {
+  const MAINTENANT = 1_700_000_000;
+  const a = (secondes, extra = {}) => ({
+    stopId: `s${secondes}`,
+    arrival: { time: MAINTENANT + secondes },
+    ...extra,
+  });
+
+  it("écarte les arrêts dont l'heure est passée", () => {
+    const liste = [a(-600), a(-300), a(120), a(400)];
+    expect(arretsAVenir(liste, MAINTENANT, true).map((s) => s.stopId)).toEqual(["s120", "s400"]);
+  });
+
+  it("tolère une minute pour un arrêt tout juste desservi", () => {
+    expect(arretsAVenir([a(-30)], MAINTENANT, true)).toHaveLength(1);
+    expect(arretsAVenir([a(-90)], MAINTENANT, true)).toHaveLength(0);
+  });
+
+  it("vide la liste d'une course terminée depuis des heures", () => {
+    // Le cas « Signal perdu depuis 178 min » : le flux publie encore la course,
+    // tous ses arrêts sont au passé.
+    const finie = [a(-11000), a(-10800), a(-10600)];
+    expect(arretsAVenir(finie, MAINTENANT, true)).toEqual([]);
+  });
+
+  it("écarte un arrêt supprimé (SKIPPED) même à venir", () => {
+    expect(arretsAVenir([a(300, { scheduleRelationship: 1 })], MAINTENANT, true)).toEqual([]);
+  });
+
+  it("retombe sur departure.time quand arrival est absent", () => {
+    const s = { stopId: "d", departure: { time: MAINTENANT + 60 } };
+    expect(arretsAVenir([s], MAINTENANT, true)).toHaveLength(1);
+  });
+
+  it("garde ou non un arrêt sans heure selon l'appelant", () => {
+    const sansHeure = [{ stopId: "x" }];
+    expect(arretsAVenir(sansHeure, MAINTENANT, true)).toHaveLength(1);
+    expect(arretsAVenir(sansHeure, MAINTENANT, false)).toHaveLength(0);
+  });
+
+  it("accepte une liste absente", () => {
+    expect(arretsAVenir(undefined, MAINTENANT, true)).toEqual([]);
   });
 });

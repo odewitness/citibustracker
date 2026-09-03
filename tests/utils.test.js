@@ -7,6 +7,7 @@ import {
   construireLien,
   distanceMetres,
   estLignePrincipale,
+  aDesArretsAVenir,
   etatPosition,
   formaterDistance,
   formaterRetard,
@@ -235,6 +236,7 @@ describe("arretsProches", () => {
 
 describe("etatPosition", () => {
   const ageDe = (secondes) => ({ horodatage: Math.floor(Date.now() / 1000) - secondes });
+  const dans = (minutes) => Math.round(Date.now() / 1000 + minutes * 60);
 
   it("considère une position récente comme « ok »", () => {
     expect(etatPosition(ageDe(20))).toBe("ok");
@@ -248,5 +250,40 @@ describe("etatPosition", () => {
       "signal-perdu"
     );
     expect(etatPosition({ ...ageDe(300), prochains_arrets: [] })).toBe("hors-service");
+  });
+  it("classe hors service un bus dont tous les arrêts sont largement passés", () => {
+    // Le cas « Signal perdu depuis 178 min » : le flux publie encore la course
+    // d'un bus rentré au dépôt. Compter la seule présence d'arrêts le laissait
+    // « attendu » indéfiniment.
+    const rentre = {
+      ...ageDe(10680),
+      prochains_arrets: [{ stop_id: "_1", arrivee: dans(-175) }],
+    };
+    expect(etatPosition(rentre)).toBe("hors-service");
+  });
+  it("laisse « signal perdu » un bus en retard dont l'arrêt vient d'être dépassé", () => {
+    const enRetard = {
+      ...ageDe(300),
+      prochains_arrets: [{ stop_id: "_1", arrivee: dans(-5) }],
+    };
+    expect(etatPosition(enRetard)).toBe("signal-perdu");
+  });
+});
+
+describe("aDesArretsAVenir", () => {
+  const dans = (minutes) => Math.round(Date.now() / 1000 + minutes * 60);
+  it("compte un arrêt sans heure comme à venir (donnée absente, on ne tranche pas)", () => {
+    expect(aDesArretsAVenir({ prochains_arrets: [{ stop_id: "_1", arrivee: null }] })).toBe(true);
+  });
+  it("suffit d'un seul arrêt encore à venir dans la liste", () => {
+    const bus = {
+      prochains_arrets: [{ arrivee: dans(-60) }, { arrivee: dans(-30) }, { arrivee: dans(4) }],
+    };
+    expect(aDesArretsAVenir(bus)).toBe(true);
+  });
+  it("renvoie false sans liste exploitable", () => {
+    expect(aDesArretsAVenir({ prochains_arrets: [] })).toBe(false);
+    expect(aDesArretsAVenir({})).toBe(false);
+    expect(aDesArretsAVenir(null)).toBe(false);
   });
 });

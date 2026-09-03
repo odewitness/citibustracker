@@ -85,6 +85,26 @@ export function busFantome(vehicule, maintenant = Date.now()) {
 // d'anormal ; au-delà de SEUIL_FANTOME_SECONDES elle ne bouge vraiment plus.
 export const SEUIL_POSITION_ANCIENNE = 60;
 
+// Un bus rentré au dépôt garde parfois, dans le flux, la liste d'arrêts de sa
+// dernière course — toutes à des heures largement dépassées. Se fier à la seule
+// PRÉSENCE d'entrées le classait « signal perdu » (donc : bus encore attendu)
+// des heures après sa dernière course. On ne compte donc que les arrêts dont
+// l'heure n'est pas franchement passée. Tolérance large : un bus vraiment en
+// retard dont le signal vient de tomber doit rester « attendu ».
+const TOLERANCE_ARRET_PASSE_SECONDES = 600;
+
+// Un arrêt sans heure d'arrivée (le flux renvoie NO_DATA sur certaines courses)
+// est compté comme à venir : on ne conclut pas « course terminée » sur une
+// donnée absente.
+export function aDesArretsAVenir(vehicule, maintenant = Date.now()) {
+  const arrets = vehicule && vehicule.prochains_arrets;
+  if (!Array.isArray(arrets) || arrets.length === 0) return false;
+  const limite = maintenant / 1000 - TOLERANCE_ARRET_PASSE_SECONDES;
+  return arrets.some(
+    (a) => a && (a.arrivee === null || a.arrivee === undefined || a.arrivee >= limite)
+  );
+}
+
 // Diagnostic plus fin qu'un simple booléen « fantôme » :
 // - "ok"           : position fraîche
 // - "ancienne"     : figée depuis 1 à 2,5 min — on l'affiche mais on la nuance
@@ -94,9 +114,7 @@ export function etatPosition(vehicule, maintenant = Date.now()) {
   const age = agePosition(vehicule, maintenant);
   if (age === null || age <= SEUIL_POSITION_ANCIENNE) return "ok";
   if (age <= SEUIL_FANTOME_SECONDES) return "ancienne";
-  const aDesArrets =
-    Array.isArray(vehicule.prochains_arrets) && vehicule.prochains_arrets.length > 0;
-  return aDesArrets ? "signal-perdu" : "hors-service";
+  return aDesArretsAVenir(vehicule, maintenant) ? "signal-perdu" : "hors-service";
 }
 
 export function formaterAge(secondes) {
