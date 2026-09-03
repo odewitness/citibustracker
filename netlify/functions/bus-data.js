@@ -97,6 +97,31 @@ function nombreEpoch(valeur) {
 // la nôtre, on considère que le flux est horodaté avec une horloge décalée.
 const ECART_HORLOGE_TOLERE_SECONDES = 120;
 
+// Autre panne observée (03/09/2026, ~15 h 40) : FeedHeader.timestamp et les
+// coordonnées restent frais, mais VehiclePosition.timestamp est gelé plusieurs
+// heures en arrière sur TOUS les véhicules. `fluxDecale` ne voit pas ce cas —
+// l'en-tête n'est pas décalé — et le client bascule alors toute la flotte en
+// « fantôme » puis « hors service ». Quand l'en-tête est frais mais que la
+// quasi-totalité des positions aurait l'air figée, l'horodatage n'est plus
+// exploitable : on le renvoie à null (fraîcheur inconnue) plutôt que d'éteindre
+// tous les bus qui roulent.
+const SEUIL_POSITION_FIGEE_SECONDES = 150;
+const PART_FLOTTE_FIGEE = 0.6;
+
+function horodatagePositionsFiable(feed, refFlux, fluxDecale) {
+  // Flux décalé : les horodatages sont déjà recalés sur l'horloge du flux, le
+  // repère de fraîcheur reste valable.
+  if (fluxDecale) return true;
+  const ages = [];
+  (feed.entity || []).forEach((e) => {
+    const t = e.vehicle ? nombreEpoch(e.vehicle.timestamp) : null;
+    if (t !== null) ages.push(refFlux - t);
+  });
+  if (ages.length < 5) return true; // échantillon trop maigre pour conclure
+  const figes = ages.filter((a) => a > SEUIL_POSITION_FIGEE_SECONDES).length;
+  return figes / ages.length < PART_FLOTTE_FIGEE;
+}
+
 const COURSE_ANNULEE = protobuf.transit_realtime.TripDescriptor.ScheduleRelationship.CANCELED;
 const ARRET_SUPPRIME =
   protobuf.transit_realtime.TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED;
@@ -239,6 +264,11 @@ exports.handler = async function () {
       horodatageFlux !== null && maintenantSec - horodatageFlux > ECART_HORLOGE_TOLERE_SECONDES;
     const refFlux = fluxDecale ? horodatageFlux : maintenantSec;
 
+    // VehiclePosition.timestamp gelé sur toute la flotte alors que l'en-tête est
+    // frais : on cesse de renvoyer un horodatage plutôt que d'éteindre tous les
+    // bus côté client (cf. horodatagePositionsFiable).
+    const horodatageFiable = horodatagePositionsFiable(feed, refFlux, fluxDecale);
+
     const horaires = {};
     feed.entity.forEach((entity) => {
       if (entity.tripUpdate && entity.tripUpdate.vehicle && entity.tripUpdate.vehicle.id) {
@@ -313,7 +343,7 @@ exports.handler = async function () {
       // relevés.
       const horodatageBrut = nombreEpoch(v.timestamp);
       const horodatage =
-        horodatageBrut === null
+        horodatageBrut === null || !horodatageFiable
           ? null
           : maintenantSec - Math.max(0, refFlux - horodatageBrut);
 
@@ -388,6 +418,9 @@ exports.handler = async function () {
         horodatage_flux: horodatageFlux,
         horloge_serveur: maintenantSec,
         flux_decale: fluxDecale,
+        // false → VehiclePosition.timestamp gelé sur toute la flotte : les
+        // `horodatage` sont à null et le client ne doit pas signaler les bus figés.
+        horodatage_fiable: horodatageFiable,
         vehicules: vehicules,
         passages_prevus: passagesPrevus,
         lignes: lignes,
@@ -411,3 +444,4 @@ exports.retardStopTime = retardStopTime;
 exports.construireArretPrevu = construireArretPrevu;
 exports.arretsAVenir = arretsAVenir;
 exports.nombreEpoch = nombreEpoch;
+exports.horodatagePositionsFiable = horodatagePositionsFiable;
