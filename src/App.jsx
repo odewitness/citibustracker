@@ -652,6 +652,15 @@ export default function App() {
     setPanneauOuvert(true);
   }
 
+  // Repli quand le temps réel n'a pas de destination pour un bus (trip absent
+  // ou sans trip_headsign côté GTFS statique) : on retombe sur le libellé de
+  // sens théorique de la ligne, pour ne pas afficher juste un numéro de bus.
+  function destinationTheorique(routeId, direction) {
+    const paires = reseau.directions[routeId] || [];
+    const trouve = paires.find(([dir]) => String(dir) === String(direction));
+    return trouve ? trouve[1] : null;
+  }
+
   // --- Alerte à l'approche : sens (destinations réelles) et arrêts disponibles ---
   // Les sens et les arrêts viennent des horaires théoriques (GTFS statique) et
   // non des bus en circulation : sinon le panneau est vide dès qu'aucun bus ne
@@ -981,9 +990,16 @@ export default function App() {
   // suivi, quand elle est affichée, pousse toute la pile vers le haut.
   // Une feuille ouverte (arrêts ou alerte) recouvre le bas de l'écran : laisser
   // les boutons flottants dessous les rendait visibles mais intouchables.
-  const busSuivi = busSelectionneId
+  const busSuiviBrut = busSelectionneId
     ? donnees.vehicules.find((v) => v.id === busSelectionneId) || null
     : null;
+  const busSuivi =
+    busSuiviBrut && !busSuiviBrut.destination
+      ? {
+          ...busSuiviBrut,
+          destination: destinationTheorique(busSuiviBrut.ligne, busSuiviBrut.direction),
+        }
+      : busSuiviBrut;
 
   // Appui long sur un bus → la carte le garde centré. Un second appui long sur
   // un autre bus déplace le verrou ; le bouton « Suivi » (ou un tap sur le fond

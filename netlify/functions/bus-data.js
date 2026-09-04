@@ -122,6 +122,46 @@ function horodatagePositionsFiable(feed, refFlux, fluxDecale) {
   return figes / ages.length < PART_FLOTTE_FIGEE;
 }
 
+// Filtre anti « véhicule fantôme » : l'exploitant publie parfois, dans le même
+// flux que les vrais bus, un véhicule de test/dépôt (id/label générique du
+// style « mx », plaque identique au label) dont la position est mise à jour en
+// direct (timestamp frais) mais qui reste rattaché à une course programmée
+// bien plus tard dans la journée. Cas observé le 04/09/2026 : véhicule
+// « narbonne-mx » figé au 1ᵉʳ arrêt, trip démarrant à 10:23 alors qu'il était
+// 6h16 — affiché à tort comme un bus en circulation. On écarte tout véhicule
+// dont l'heure de départ théorique du trip est trop loin dans le futur par
+// rapport à l'heure courante : un bus réellement en service ne peut pas
+// afficher une position à jour pour une course qui n'a pas encore de raison
+// d'avoir démarré.
+const SEUIL_DEPART_FUTUR_SECONDES = 45 * 60;
+
+function secondesLocalesDepuisMinuit(epochSec) {
+  const parts = new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Europe/Paris",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(epochSec * 1000));
+  const get = (type) => Number(parts.find((p) => p.type === type)?.value || 0);
+  return get("hour") * 3600 + get("minute") * 60 + get("second");
+}
+
+// "H:MM:SS" (parfois > 24h pour une course après minuit) → secondes depuis minuit.
+function secondesDepartTrip(startTime) {
+  const m = /^(\d{1,3}):(\d{2}):(\d{2})$/.exec((startTime || "").trim());
+  if (!m) return null;
+  return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+}
+
+function departTropLointain(startTime, maintenantSec) {
+  const depart = secondesDepartTrip(startTime);
+  if (depart === null) return false;
+  let ecart = depart - secondesLocalesDepuisMinuit(maintenantSec);
+  if (ecart > 20 * 3600) ecart -= 24 * 3600; // "25:10:00" = 01:10 le lendemain
+  return ecart > SEUIL_DEPART_FUTUR_SECONDES;
+}
+
 const COURSE_ANNULEE = protobuf.transit_realtime.TripDescriptor.ScheduleRelationship.CANCELED;
 const ARRET_SUPPRIME =
   protobuf.transit_realtime.TripUpdate.StopTimeUpdate.ScheduleRelationship.SKIPPED;
@@ -303,6 +343,8 @@ exports.handler = async function () {
       // prévue) à partir de stopTimeUpdate, en repartant du même arrêt/séquence
       // que la position GPS pour ne pas inclure d'arrêts déjà dépassés.
       const tu = horaires[vid];
+      if (tu && tu.trip && departTropLointain(tu.trip.startTime, maintenantSec)) return;
+
       if (tu && tu.stopTimeUpdate && tu.stopTimeUpdate.length > 0) {
         let idxDepart = -1;
         if (seqActuelle) {
@@ -445,3 +487,4 @@ exports.construireArretPrevu = construireArretPrevu;
 exports.arretsAVenir = arretsAVenir;
 exports.nombreEpoch = nombreEpoch;
 exports.horodatagePositionsFiable = horodatagePositionsFiable;
+exports.departTropLointain = departTropLointain;
